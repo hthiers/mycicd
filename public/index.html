@@ -1,0 +1,375 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple CI/CD Tool</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+      background: #f5f5f5;
+      padding: 20px;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 30px;
+    }
+
+    .section {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    h2 {
+      color: #555;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+
+    .form-group {
+      margin-bottom: 15px;
+    }
+
+    label {
+      display: block;
+      margin-bottom: 5px;
+      color: #666;
+      font-size: 14px;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 14px;
+      font-family: inherit;
+    }
+
+    textarea {
+      resize: vertical;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #4CAF50;
+    }
+
+    button {
+      background: #4CAF50;
+      color: white;
+      padding: 12px 24px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+
+    button:hover {
+      background: #45a049;
+    }
+
+    button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+
+    .job {
+      border: 1px solid #e0e0e0;
+      padding: 15px;
+      margin-bottom: 10px;
+      border-radius: 4px;
+      background: #fafafa;
+    }
+
+    .job-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+
+    .status {
+      padding: 4px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    .status.pending { background: #fff3cd; color: #856404; }
+    .status.running { background: #cce5ff; color: #004085; }
+    .status.completed { background: #d4edda; color: #155724; }
+    .status.failed { background: #f8d7da; color: #721c24; }
+
+    .logs {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 15px;
+      border-radius: 4px;
+      font-family: 'Courier New', monospace;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-wrap: break-word;
+    }
+
+    .job-info {
+      font-size: 13px;
+      color: #666;
+    }
+
+    .refresh-btn {
+      background: #2196F3;
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+
+    .refresh-btn:hover {
+      background: #0b7dda;
+    }
+
+    .message {
+      padding: 10px;
+      margin-bottom: 15px;
+      border-radius: 4px;
+    }
+
+    .message.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .message.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Simple CI/CD Tool</h1>
+
+    <div class="section">
+      <h2>Deploy New Build</h2>
+      <div id="message"></div>
+      <form id="deployForm">
+        <div class="form-group">
+          <label>Project Path (absolute path to Dockerfile directory):</label>
+          <input type="text" id="projectPath" required placeholder="/path/to/your/project">
+        </div>
+
+        <div class="form-group">
+          <label>Image Name:</label>
+          <input type="text" id="imageName" required placeholder="my-app">
+        </div>
+
+        <div class="form-group">
+          <label>Image Tag:</label>
+          <input type="text" id="imageTag" required placeholder="latest">
+        </div>
+
+        <div class="form-group">
+          <label>Build Platform (optional, e.g., linux/amd64):</label>
+          <input type="text" id="buildPlatform" placeholder="Leave empty for default platform">
+        </div>
+
+        <div class="form-group">
+          <label>Docker Hub Username:</label>
+          <input type="text" id="dockerHubUsername" required>
+        </div>
+
+        <div class="form-group">
+          <label>Docker Hub Password:</label>
+          <input type="password" id="dockerHubPassword" required>
+        </div>
+
+        <div class="form-group">
+          <label>SSH Host:</label>
+          <input type="text" id="sshHost" required placeholder="192.168.1.100">
+        </div>
+
+        <div class="form-group">
+          <label>SSH User:</label>
+          <input type="text" id="sshUser" required placeholder="root">
+        </div>
+
+        <div class="form-group">
+          <label>SSH Password (required if not using SSH key):</label>
+          <input type="password" id="sshPassword" placeholder="Leave empty if using SSH key">
+        </div>
+
+        <div class="form-group">
+          <label>SSH Private Key (required if not using password):</label>
+          <textarea id="sshPrivateKey" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste your private key here...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>SSH Key Passphrase (if your key is encrypted):</label>
+          <input type="password" id="sshPassphrase" placeholder="Leave empty if key has no passphrase">
+        </div>
+
+        <div class="form-group">
+          <label>Container Name (on remote server):</label>
+          <input type="text" id="containerName" required placeholder="my-app-container">
+        </div>
+
+        <div class="form-group">
+          <label>Host Port (optional, server port to expose):</label>
+          <input type="number" id="hostPort" placeholder="80">
+        </div>
+
+        <div class="form-group">
+          <label>Container Port (optional, port inside container):</label>
+          <input type="number" id="containerPort" placeholder="8080">
+        </div>
+
+        <button type="submit" id="deployBtn">Start Deployment</button>
+      </form>
+    </div>
+
+    <div class="section">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+        <h2 style="margin: 0;">Recent Jobs</h2>
+        <button class="refresh-btn" onclick="loadJobs()">Refresh</button>
+      </div>
+      <div id="jobs"></div>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('deployForm');
+    const deployBtn = document.getElementById('deployBtn');
+    const messageDiv = document.getElementById('message');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const data = {
+        projectPath: document.getElementById('projectPath').value,
+        imageName: document.getElementById('imageName').value,
+        imageTag: document.getElementById('imageTag').value,
+        buildPlatform: document.getElementById('buildPlatform').value,
+        dockerHubUsername: document.getElementById('dockerHubUsername').value,
+        dockerHubPassword: document.getElementById('dockerHubPassword').value,
+        sshHost: document.getElementById('sshHost').value,
+        sshUser: document.getElementById('sshUser').value,
+        sshPassword: document.getElementById('sshPassword').value,
+        sshPrivateKey: document.getElementById('sshPrivateKey').value,
+        sshPassphrase: document.getElementById('sshPassphrase').value,
+        containerName: document.getElementById('containerName').value,
+        hostPort: document.getElementById('hostPort').value,
+        containerPort: document.getElementById('containerPort').value
+      };
+
+      // Validate SSH authentication
+      if (!data.sshPassword && !data.sshPrivateKey) {
+        showMessage('Either SSH Password or SSH Private Key must be provided', 'error');
+        return;
+      }
+
+      deployBtn.disabled = true;
+      deployBtn.textContent = 'Deploying...';
+      showMessage('', '');
+
+      try {
+        const response = await fetch('/api/deploy', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          showMessage(`Deployment started! Job ID: ${result.jobId}`, 'success');
+          setTimeout(loadJobs, 1000);
+        } else {
+          showMessage(`Error: ${result.error}`, 'error');
+        }
+      } catch (error) {
+        showMessage(`Error: ${error.message}`, 'error');
+      } finally {
+        deployBtn.disabled = false;
+        deployBtn.textContent = 'Start Deployment';
+      }
+    });
+
+    function showMessage(msg, type) {
+      if (!msg) {
+        messageDiv.innerHTML = '';
+        return;
+      }
+      messageDiv.innerHTML = `<div class="message ${type}">${msg}</div>`;
+    }
+
+    async function loadJobs() {
+      try {
+        const response = await fetch('/api/jobs');
+        const jobs = await response.json();
+
+        const jobsDiv = document.getElementById('jobs');
+
+        if (jobs.length === 0) {
+          jobsDiv.innerHTML = '<p style="color: #999;">No jobs yet</p>';
+          return;
+        }
+
+        jobsDiv.innerHTML = jobs.reverse().map(job => `
+          <div class="job">
+            <div class="job-header">
+              <div class="job-info">
+                <strong>Job #${job.id}</strong> -
+                ${job.config.imageName}:${job.config.imageTag}${job.config.buildPlatform ? ` [${job.config.buildPlatform}]` : ''} → ${job.config.sshHost}
+                ${job.config.hostPort && job.config.containerPort ? ` (${job.config.hostPort}:${job.config.containerPort})` : ''}
+              </div>
+              <span class="status ${job.status}">${job.status.toUpperCase()}</span>
+            </div>
+            <div class="job-info" style="margin-bottom: 10px;">
+              ${new Date(job.createdAt).toLocaleString()}
+            </div>
+            ${job.logs.length > 0 ? `
+              <div class="logs">${job.logs.join('\n')}</div>
+            ` : '<p style="color: #999; font-size: 13px;">No logs yet</p>'}
+          </div>
+        `).join('');
+
+        // Scroll all log containers to bottom
+        setTimeout(() => {
+          document.querySelectorAll('.logs').forEach(logDiv => {
+            logDiv.scrollTop = logDiv.scrollHeight;
+          });
+        }, 0);
+      } catch (error) {
+        console.error('Error loading jobs:', error);
+      }
+    }
+
+    // Load jobs on page load
+    loadJobs();
+
+    // Auto-refresh jobs every 5 seconds
+    setInterval(loadJobs, 5000);
+  </script>
+</body>
+</html>
