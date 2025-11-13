@@ -171,6 +171,24 @@
     <h1>Simple CI/CD Tool</h1>
 
     <div class="section">
+      <h2>Project Management</h2>
+      <div id="projectMessage"></div>
+
+      <div class="form-group">
+        <label>Select Project:</label>
+        <select id="projectSelect" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+          <option value="">-- New Deployment --</option>
+        </select>
+      </div>
+
+      <div style="display: flex; gap: 10px; margin-top: 10px;">
+        <button type="button" id="loadProjectBtn" style="background: #2196F3; flex: 1;">Load Project</button>
+        <button type="button" id="saveProjectBtn" style="background: #4CAF50; flex: 1;">Save as Project</button>
+        <button type="button" id="deleteProjectBtn" style="background: #f44336; flex: 1;">Delete Project</button>
+      </div>
+    </div>
+
+    <div class="section">
       <h2>Deploy New Build</h2>
       <div id="message"></div>
       <form id="deployForm">
@@ -244,6 +262,11 @@
           <input type="number" id="containerPort" placeholder="8080">
         </div>
 
+        <div class="form-group">
+          <label>Environment Variables (optional, one per line):</label>
+          <textarea id="envVars" rows="4" placeholder="NODE_ENV=production&#10;PORT=8080&#10;API_KEY=your-api-key"></textarea>
+        </div>
+
         <button type="submit" id="deployBtn">Start Deployment</button>
       </form>
     </div>
@@ -261,11 +284,41 @@
     const form = document.getElementById('deployForm');
     const deployBtn = document.getElementById('deployBtn');
     const messageDiv = document.getElementById('message');
+    const projectMessageDiv = document.getElementById('projectMessage');
+    const projectSelect = document.getElementById('projectSelect');
+    const loadProjectBtn = document.getElementById('loadProjectBtn');
+    const saveProjectBtn = document.getElementById('saveProjectBtn');
+    const deleteProjectBtn = document.getElementById('deleteProjectBtn');
 
-    form.addEventListener('submit', async (e) => {
-      e.preventDefault();
+    // Project Management Functions
+    function showProjectMessage(msg, type) {
+      if (!msg) {
+        projectMessageDiv.innerHTML = '';
+        return;
+      }
+      projectMessageDiv.innerHTML = `<div class="message ${type}">${msg}</div>`;
+      setTimeout(() => { projectMessageDiv.innerHTML = ''; }, 5000);
+    }
 
-      const data = {
+    async function loadProjects() {
+      try {
+        const response = await fetch('/api/projects');
+        const projects = await response.json();
+
+        projectSelect.innerHTML = '<option value="">-- New Deployment --</option>';
+        projects.forEach(project => {
+          const option = document.createElement('option');
+          option.value = project.id;
+          option.textContent = project.name;
+          projectSelect.appendChild(option);
+        });
+      } catch (error) {
+        console.error('Error loading projects:', error);
+      }
+    }
+
+    function getFormData() {
+      return {
         projectPath: document.getElementById('projectPath').value,
         imageName: document.getElementById('imageName').value,
         imageTag: document.getElementById('imageTag').value,
@@ -279,8 +332,130 @@
         sshPassphrase: document.getElementById('sshPassphrase').value,
         containerName: document.getElementById('containerName').value,
         hostPort: document.getElementById('hostPort').value,
-        containerPort: document.getElementById('containerPort').value
+        containerPort: document.getElementById('containerPort').value,
+        envVars: document.getElementById('envVars').value
       };
+    }
+
+    function setFormData(config) {
+      document.getElementById('projectPath').value = config.projectPath || '';
+      document.getElementById('imageName').value = config.imageName || '';
+      document.getElementById('imageTag').value = config.imageTag || '';
+      document.getElementById('buildPlatform').value = config.buildPlatform || '';
+      document.getElementById('dockerHubUsername').value = config.dockerHubUsername || '';
+      document.getElementById('dockerHubPassword').value = config.dockerHubPassword || '';
+      document.getElementById('sshHost').value = config.sshHost || '';
+      document.getElementById('sshUser').value = config.sshUser || '';
+      document.getElementById('sshPassword').value = config.sshPassword || '';
+      document.getElementById('sshPrivateKey').value = config.sshPrivateKey || '';
+      document.getElementById('sshPassphrase').value = config.sshPassphrase || '';
+      document.getElementById('containerName').value = config.containerName || '';
+      document.getElementById('hostPort').value = config.hostPort || '';
+      document.getElementById('containerPort').value = config.containerPort || '';
+      document.getElementById('envVars').value = config.envVars || '';
+    }
+
+    loadProjectBtn.addEventListener('click', async () => {
+      const projectId = projectSelect.value;
+      if (!projectId) {
+        showProjectMessage('Please select a project to load', 'error');
+        return;
+      }
+
+      const masterPassword = prompt('Enter master password to decrypt project:');
+      if (!masterPassword) return;
+
+      try {
+        const response = await fetch(`/api/projects/${projectId}/decrypt`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ masterPassword })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          setFormData(result.config);
+          showProjectMessage(`Project "${result.name}" loaded successfully!`, 'success');
+        } else {
+          showProjectMessage(result.error, 'error');
+        }
+      } catch (error) {
+        showProjectMessage(`Error: ${error.message}`, 'error');
+      }
+    });
+
+    saveProjectBtn.addEventListener('click', async () => {
+      const projectName = prompt('Enter project name:');
+      if (!projectName) return;
+
+      const masterPassword = prompt('Enter master password to encrypt sensitive data:');
+      if (!masterPassword) return;
+
+      const confirmPassword = prompt('Confirm master password:');
+      if (masterPassword !== confirmPassword) {
+        showProjectMessage('Passwords do not match!', 'error');
+        return;
+      }
+
+      const config = getFormData();
+
+      try {
+        const response = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: projectName, masterPassword, config })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          showProjectMessage(result.message, 'success');
+          await loadProjects();
+          projectSelect.value = result.id;
+        } else {
+          showProjectMessage(result.error, 'error');
+        }
+      } catch (error) {
+        showProjectMessage(`Error: ${error.message}`, 'error');
+      }
+    });
+
+    deleteProjectBtn.addEventListener('click', async () => {
+      const projectId = projectSelect.value;
+      if (!projectId) {
+        showProjectMessage('Please select a project to delete', 'error');
+        return;
+      }
+
+      if (!confirm('Are you sure you want to delete this project?')) return;
+
+      try {
+        const response = await fetch(`/api/projects/${projectId}`, {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          showProjectMessage(result.message, 'success');
+          await loadProjects();
+          projectSelect.value = '';
+        } else {
+          showProjectMessage(result.error, 'error');
+        }
+      } catch (error) {
+        showProjectMessage(`Error: ${error.message}`, 'error');
+      }
+    });
+
+    // Load projects on page load
+    loadProjects();
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+
+      const data = getFormData();
 
       // Validate SSH authentication
       if (!data.sshPassword && !data.sshPrivateKey) {

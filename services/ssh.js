@@ -1,6 +1,6 @@
 const { NodeSSH } = require('node-ssh');
 
-async function deployContainer(host, username, password, imageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, logCallback) {
+async function deployContainer(host, username, password, imageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, logCallback) {
   const ssh = new NodeSSH();
 
   try {
@@ -40,12 +40,24 @@ async function deployContainer(host, username, password, imageName, containerNam
     await executeCommand(ssh, `docker stop ${containerName} || true`, logCallback);
     await executeCommand(ssh, `docker rm ${containerName} || true`, logCallback);
 
-    // Build docker run command with optional port mapping
+    // Build docker run command with optional port mapping and environment variables
     let dockerRunCmd = `docker run -d --name ${containerName}`;
 
     if (hostPort && containerPort) {
       dockerRunCmd += ` -p ${hostPort}:${containerPort}`;
       logCallback(`Port mapping: ${hostPort} -> ${containerPort}`);
+    }
+
+    // Add environment variables if provided
+    if (envVars && envVars.trim()) {
+      const envLines = envVars.split('\n').filter(line => line.trim());
+      envLines.forEach(line => {
+        const trimmedLine = line.trim();
+        if (trimmedLine) {
+          dockerRunCmd += ` -e "${trimmedLine}"`;
+        }
+      });
+      logCallback(`Environment variables: ${envLines.length} variable(s) set`);
     }
 
     dockerRunCmd += ` ${imageName}`;
