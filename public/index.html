@@ -164,6 +164,53 @@
       color: #721c24;
       border: 1px solid #f5c6cb;
     }
+
+    .collapsible-section {
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin-bottom: 15px;
+      overflow: hidden;
+    }
+
+    .section-header {
+      background: #f8f9fa;
+      padding: 15px;
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      user-select: none;
+      border-bottom: 1px solid #ddd;
+    }
+
+    .section-header:hover {
+      background: #e9ecef;
+    }
+
+    .section-header h3 {
+      margin: 0;
+      font-size: 16px;
+      color: #333;
+    }
+
+    .section-header .toggle-icon {
+      font-size: 18px;
+      color: #666;
+      transition: transform 0.3s;
+    }
+
+    .section-header.collapsed .toggle-icon {
+      transform: rotate(-90deg);
+    }
+
+    .section-content {
+      padding: 20px;
+      display: block;
+    }
+
+    .section-content.collapsed {
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -192,79 +239,113 @@
       <h2>Deploy New Build</h2>
       <div id="message"></div>
       <form id="deployForm">
-        <div class="form-group">
-          <label>Project Path (absolute path to Dockerfile directory):</label>
-          <input type="text" id="projectPath" required placeholder="/path/to/your/project">
+        <!-- Build Section -->
+        <div class="collapsible-section">
+          <div class="section-header" data-section="build">
+            <h3>Build Configuration</h3>
+            <span class="toggle-icon">▼</span>
+          </div>
+          <div class="section-content" data-content="build">
+            <div class="form-group">
+              <label>Project Path (absolute path to Dockerfile directory):</label>
+              <input type="text" id="projectPath" required placeholder="/path/to/your/project">
+            </div>
+
+            <div class="form-group">
+              <label>Image Name:</label>
+              <input type="text" id="imageName" required placeholder="my-app">
+            </div>
+
+            <div class="form-group">
+              <label>Image Tag:</label>
+              <input type="text" id="imageTag" required placeholder="latest">
+              <div id="tagWarning" style="display: none; color: #d32f2f; font-size: 13px; margin-top: 5px;">
+                ⚠️ This tag already exists! Consider using a new tag to avoid overwriting.
+              </div>
+              <div id="tagHistory" style="margin-top: 10px; font-size: 13px; color: #666;">
+                <div style="font-weight: 500; margin-bottom: 5px;">Recent tags:</div>
+                <div id="tagList" style="font-style: italic;">Enter image name and username to see recent tags</div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>Build Platform (optional, e.g., linux/amd64):</label>
+              <input type="text" id="buildPlatform" placeholder="Leave empty for default platform">
+            </div>
+
+            <div class="form-group">
+              <label>Docker Hub Username:</label>
+              <input type="text" id="dockerHubUsername" required>
+            </div>
+
+            <div class="form-group">
+              <label>Docker Hub Password:</label>
+              <input type="password" id="dockerHubPassword" required>
+            </div>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label>Image Name:</label>
-          <input type="text" id="imageName" required placeholder="my-app">
+        <!-- Deployment Section -->
+        <div class="collapsible-section">
+          <div class="section-header" data-section="deployment">
+            <h3>Deployment Configuration</h3>
+            <span class="toggle-icon">▼</span>
+          </div>
+          <div class="section-content" data-content="deployment">
+            <div class="form-group">
+              <label>SSH Host:</label>
+              <input type="text" id="sshHost" required placeholder="192.168.1.100">
+            </div>
+
+            <div class="form-group">
+              <label>SSH User:</label>
+              <input type="text" id="sshUser" required placeholder="root">
+            </div>
+
+            <div class="form-group">
+              <label>SSH Password (required if not using SSH key):</label>
+              <input type="password" id="sshPassword" placeholder="Leave empty if using SSH key">
+            </div>
+
+            <div class="form-group">
+              <label>SSH Private Key (required if not using password):</label>
+              <textarea id="sshPrivateKey" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste your private key here...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label>SSH Key Passphrase (if your key is encrypted):</label>
+              <input type="password" id="sshPassphrase" placeholder="Leave empty if key has no passphrase">
+            </div>
+          </div>
         </div>
 
-        <div class="form-group">
-          <label>Image Tag:</label>
-          <input type="text" id="imageTag" required placeholder="latest">
-        </div>
+        <!-- Execution Section -->
+        <div class="collapsible-section">
+          <div class="section-header" data-section="execution">
+            <h3>Execution Configuration</h3>
+            <span class="toggle-icon">▼</span>
+          </div>
+          <div class="section-content" data-content="execution">
+            <div class="form-group">
+              <label>Container Name (on remote server):</label>
+              <input type="text" id="containerName" required placeholder="my-app-container">
+            </div>
 
-        <div class="form-group">
-          <label>Build Platform (optional, e.g., linux/amd64):</label>
-          <input type="text" id="buildPlatform" placeholder="Leave empty for default platform">
-        </div>
+            <div class="form-group">
+              <label>Host Port (optional, server port to expose):</label>
+              <input type="number" id="hostPort" placeholder="80">
+            </div>
 
-        <div class="form-group">
-          <label>Docker Hub Username:</label>
-          <input type="text" id="dockerHubUsername" required>
-        </div>
+            <div class="form-group">
+              <label>Container Port (optional, port inside container):</label>
+              <input type="number" id="containerPort" placeholder="8080">
+            </div>
 
-        <div class="form-group">
-          <label>Docker Hub Password:</label>
-          <input type="password" id="dockerHubPassword" required>
-        </div>
-
-        <div class="form-group">
-          <label>SSH Host:</label>
-          <input type="text" id="sshHost" required placeholder="192.168.1.100">
-        </div>
-
-        <div class="form-group">
-          <label>SSH User:</label>
-          <input type="text" id="sshUser" required placeholder="root">
-        </div>
-
-        <div class="form-group">
-          <label>SSH Password (required if not using SSH key):</label>
-          <input type="password" id="sshPassword" placeholder="Leave empty if using SSH key">
-        </div>
-
-        <div class="form-group">
-          <label>SSH Private Key (required if not using password):</label>
-          <textarea id="sshPrivateKey" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste your private key here...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
-        </div>
-
-        <div class="form-group">
-          <label>SSH Key Passphrase (if your key is encrypted):</label>
-          <input type="password" id="sshPassphrase" placeholder="Leave empty if key has no passphrase">
-        </div>
-
-        <div class="form-group">
-          <label>Container Name (on remote server):</label>
-          <input type="text" id="containerName" required placeholder="my-app-container">
-        </div>
-
-        <div class="form-group">
-          <label>Host Port (optional, server port to expose):</label>
-          <input type="number" id="hostPort" placeholder="80">
-        </div>
-
-        <div class="form-group">
-          <label>Container Port (optional, port inside container):</label>
-          <input type="number" id="containerPort" placeholder="8080">
-        </div>
-
-        <div class="form-group">
-          <label>Environment Variables (optional, one per line):</label>
-          <textarea id="envVars" rows="4" placeholder="NODE_ENV=production&#10;PORT=8080&#10;API_KEY=your-api-key"></textarea>
+            <div class="form-group">
+              <label>Environment Variables (optional, one per line):</label>
+              <textarea id="envVars" rows="4" placeholder="NODE_ENV=production&#10;PORT=8080&#10;API_KEY=your-api-key"></textarea>
+            </div>
+          </div>
         </div>
 
         <button type="submit" id="deployBtn">Start Deployment</button>
@@ -451,6 +532,83 @@
 
     // Load projects on page load
     loadProjects();
+
+    // Collapsible sections functionality
+    document.querySelectorAll('.section-header').forEach(header => {
+      header.addEventListener('click', () => {
+        const section = header.getAttribute('data-section');
+        const content = document.querySelector(`[data-content="${section}"]`);
+
+        header.classList.toggle('collapsed');
+        content.classList.toggle('collapsed');
+      });
+    });
+
+    // Tag history and duplicate detection
+    const dockerHubUsernameInput = document.getElementById('dockerHubUsername');
+    const imageNameInput = document.getElementById('imageName');
+    const imageTagInput = document.getElementById('imageTag');
+    const tagWarningDiv = document.getElementById('tagWarning');
+    const tagListDiv = document.getElementById('tagList');
+
+    async function loadTagHistory() {
+      const username = dockerHubUsernameInput.value.trim();
+      const imageName = imageNameInput.value.trim();
+
+      if (!username || !imageName) {
+        tagListDiv.innerHTML = '<span style="font-style: italic;">Enter image name and username to see recent tags</span>';
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/tags/${username}/${imageName}`);
+        const tags = await response.json();
+
+        if (tags.length === 0) {
+          tagListDiv.innerHTML = '<span style="font-style: italic;">No tags created yet for this image</span>';
+        } else {
+          const tagItems = tags.slice(0, 5).map(t => {
+            const date = new Date(t.createdAt).toLocaleString();
+            return `<div style="padding: 3px 0;"><code style="background: #f5f5f5; padding: 2px 6px; border-radius: 3px;">${t.tag}</code> <span style="color: #999; font-size: 11px;">(${date})</span></div>`;
+          }).join('');
+          tagListDiv.innerHTML = tagItems;
+        }
+
+        // Check if current tag is a duplicate
+        checkTagDuplicate();
+      } catch (error) {
+        console.error('Error loading tag history:', error);
+      }
+    }
+
+    async function checkTagDuplicate() {
+      const username = dockerHubUsernameInput.value.trim();
+      const imageName = imageNameInput.value.trim();
+      const tag = imageTagInput.value.trim();
+
+      if (!username || !imageName || !tag) {
+        tagWarningDiv.style.display = 'none';
+        return;
+      }
+
+      try {
+        const response = await fetch(`/api/tags/${username}/${imageName}/${encodeURIComponent(tag)}/exists`);
+        const result = await response.json();
+
+        if (result.exists) {
+          tagWarningDiv.style.display = 'block';
+        } else {
+          tagWarningDiv.style.display = 'none';
+        }
+      } catch (error) {
+        console.error('Error checking tag duplicate:', error);
+      }
+    }
+
+    // Listen for changes to update tag history and check duplicates
+    dockerHubUsernameInput.addEventListener('input', loadTagHistory);
+    imageNameInput.addEventListener('input', loadTagHistory);
+    imageTagInput.addEventListener('input', checkTagDuplicate);
 
     form.addEventListener('submit', async (e) => {
       e.preventDefault();

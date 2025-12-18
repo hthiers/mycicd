@@ -15,7 +15,8 @@
     "dockerode": "^4.0.0",
     "node-ssh": "^13.1.0",
     "body-parser": "^1.20.2",
-    "tar-fs": "^3.0.4"
+    "tar-fs": "^3.0.4",
+    "mysql2": "^3.6.5"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"

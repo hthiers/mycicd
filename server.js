@@ -4,6 +4,7 @@ const path = require('path');
 const dockerService = require('./services/docker');
 const sshService = require('./services/ssh');
 const cryptoService = require('./services/crypto');
+const db = require('./services/database');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -12,13 +13,8 @@ const PORT = process.env.PORT || 3000;
 app.use(bodyParser.json());
 app.use(express.static('public'));
 
-// In-memory job storage
-const jobs = [];
-let jobIdCounter = 1;
-
-// In-memory project storage
-const projects = [];
-let projectIdCounter = 1;
+// In-memory job tracking (for active jobs only)
+const activeJobs = new Map();
 
 // API Routes
 app.post('/api/deploy', async (req, res) => {
@@ -34,63 +30,57 @@ app.post('/api/deploy', async (req, res) => {
     return res.status(400).json({ error: 'Either SSH password or SSH private key must be provided' });
   }
 
-  const jobId = jobIdCounter++;
-  const job = {
-    id: jobId,
-    status: 'pending',
-    logs: [],
-    createdAt: new Date().toISOString(),
-    config: { projectPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform }
-  };
+  try {
+    const config = { projectPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform };
+    const jobId = await db.createJob(config);
 
-  jobs.push(job);
-  res.json({ jobId, message: 'Deployment started' });
+    // Store active job in memory for real-time updates
+    activeJobs.set(jobId, { status: 'pending', logs: [] });
 
-  // Run deployment asynchronously
-  runDeployment(job, { projectPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars });
-});
+    res.json({ jobId, message: 'Deployment started' });
 
-app.get('/api/jobs', (req, res) => {
-  // Return jobs without sensitive info
-  const safeJobs = jobs.map(job => ({
-    id: job.id,
-    status: job.status,
-    logs: job.logs,
-    createdAt: job.createdAt,
-    config: job.config
-  }));
-  res.json(safeJobs);
-});
-
-app.get('/api/jobs/:id', (req, res) => {
-  const job = jobs.find(j => j.id === parseInt(req.params.id));
-  if (!job) {
-    return res.status(404).json({ error: 'Job not found' });
+    // Run deployment asynchronously
+    runDeployment(jobId, { projectPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to create job: ${error.message}` });
   }
-  res.json({
-    id: job.id,
-    status: job.status,
-    logs: job.logs,
-    createdAt: job.createdAt,
-    config: job.config
-  });
+});
+
+app.get('/api/jobs', async (req, res) => {
+  try {
+    const jobs = await db.getAllJobs();
+    res.json(jobs);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to fetch jobs: ${error.message}` });
+  }
+});
+
+app.get('/api/jobs/:id', async (req, res) => {
+  try {
+    const job = await db.getJob(parseInt(req.params.id));
+    if (!job) {
+      return res.status(404).json({ error: 'Job not found' });
+    }
+    res.json(job);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to fetch job: ${error.message}` });
+  }
 });
 
 // Project Management API Routes
 
 // Get all projects (without decrypted sensitive data)
-app.get('/api/projects', (req, res) => {
-  const safeProjects = projects.map(project => ({
-    id: project.id,
-    name: project.name,
-    createdAt: project.createdAt,
-    updatedAt: project.updatedAt
-  }));
-  res.json(safeProjects);
+app.get('/api/projects', async (req, res) => {
+  try {
+    const projects = await db.getAllProjects();
+    res.json(projects);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to fetch projects: ${error.message}` });
+  }
 });
 
 // Create or update project
-app.post('/api/projects', (req, res) => {
+app.post('/api/projects', async (req, res) => {
   const { id, name, masterPassword, config } = req.body;
 
   if (!name || !masterPassword || !config) {
@@ -119,49 +109,37 @@ app.post('/api/projects', (req, res) => {
 
     if (id) {
       // Update existing project
-      const projectIndex = projects.findIndex(p => p.id === parseInt(id));
-      if (projectIndex === -1) {
+      const existingProject = await db.getProject(parseInt(id));
+      if (!existingProject) {
         return res.status(404).json({ error: 'Project not found' });
       }
-      projects[projectIndex] = {
-        id: parseInt(id),
-        name,
-        config: encryptedConfig,
-        createdAt: projects[projectIndex].createdAt,
-        updatedAt: new Date().toISOString()
-      };
+      await db.updateProject(parseInt(id), name, encryptedConfig);
       res.json({ id: parseInt(id), message: 'Project updated successfully' });
     } else {
       // Create new project
-      const newProject = {
-        id: projectIdCounter++,
-        name,
-        config: encryptedConfig,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      projects.push(newProject);
-      res.json({ id: newProject.id, message: 'Project created successfully' });
+      const newId = await db.createProject(name, encryptedConfig);
+      res.json({ id: newId, message: 'Project created successfully' });
     }
   } catch (error) {
-    res.status(500).json({ error: `Encryption failed: ${error.message}` });
+    res.status(500).json({ error: `Failed to save project: ${error.message}` });
   }
 });
 
 // Get project by ID and decrypt
-app.post('/api/projects/:id/decrypt', (req, res) => {
+app.post('/api/projects/:id/decrypt', async (req, res) => {
   const { masterPassword } = req.body;
-  const project = projects.find(p => p.id === parseInt(req.params.id));
-
-  if (!project) {
-    return res.status(404).json({ error: 'Project not found' });
-  }
 
   if (!masterPassword) {
     return res.status(400).json({ error: 'Master password required' });
   }
 
   try {
+    const project = await db.getProject(parseInt(req.params.id));
+
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
     // Decrypt sensitive fields
     const decryptedConfig = {
       projectPath: project.config.projectPath,
@@ -192,54 +170,118 @@ app.post('/api/projects/:id/decrypt', (req, res) => {
 });
 
 // Delete project
-app.delete('/api/projects/:id', (req, res) => {
-  const projectIndex = projects.findIndex(p => p.id === parseInt(req.params.id));
+app.delete('/api/projects/:id', async (req, res) => {
+  try {
+    const project = await db.getProject(parseInt(req.params.id));
 
-  if (projectIndex === -1) {
-    return res.status(404).json({ error: 'Project not found' });
+    if (!project) {
+      return res.status(404).json({ error: 'Project not found' });
+    }
+
+    await db.deleteProject(parseInt(req.params.id));
+    res.json({ message: 'Project deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to delete project: ${error.message}` });
   }
+});
 
-  projects.splice(projectIndex, 1);
-  res.json({ message: 'Project deleted successfully' });
+// Image Tag History API Routes
+
+// Get tag history for a specific image
+app.get('/api/tags/:username/:imageName', async (req, res) => {
+  try {
+    const imageKey = `${req.params.username}/${req.params.imageName}`;
+    const tags = await db.getImageTags(imageKey);
+    res.json(tags);
+  } catch (error) {
+    res.status(500).json({ error: `Failed to fetch tags: ${error.message}` });
+  }
+});
+
+// Check if a specific tag exists for an image
+app.get('/api/tags/:username/:imageName/:tag/exists', async (req, res) => {
+  try {
+    const imageKey = `${req.params.username}/${req.params.imageName}`;
+    const exists = await db.tagExists(imageKey, req.params.tag);
+    res.json({ exists, tag: req.params.tag, image: imageKey });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to check tag: ${error.message}` });
+  }
 });
 
 // Deployment function
-async function runDeployment(job, config) {
+async function runDeployment(jobId, config) {
   const { projectPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars } = config;
   const fullImageName = `${dockerHubUsername}/${imageName}:${imageTag}`;
 
+  // Get active job from memory
+  const job = activeJobs.get(jobId);
+  if (!job) return;
+
   try {
     job.status = 'running';
+    await updateJobInDB(jobId, job.status, job.logs);
 
     // Step 1: Build Docker image
-    addLog(job, 'Building Docker image...');
-    await dockerService.buildImage(projectPath, fullImageName, buildPlatform, (log) => addLog(job, log));
-    addLog(job, `Successfully built image: ${fullImageName}`);
+    addLog(jobId, 'Building Docker image...');
+    await dockerService.buildImage(projectPath, fullImageName, buildPlatform, (log) => addLog(jobId, log));
+    addLog(jobId, `Successfully built image: ${fullImageName}`);
 
     // Step 2: Push to Docker Hub
-    addLog(job, 'Pushing image to Docker Hub...');
-    await dockerService.pushImage(fullImageName, dockerHubUsername, dockerHubPassword, (log) => addLog(job, log));
-    addLog(job, 'Successfully pushed image to Docker Hub');
+    addLog(jobId, 'Pushing image to Docker Hub...');
+    await dockerService.pushImage(fullImageName, dockerHubUsername, dockerHubPassword, (log) => addLog(jobId, log));
+    addLog(jobId, 'Successfully pushed image to Docker Hub');
 
     // Step 3: Deploy to server via SSH
-    addLog(job, `Connecting to server ${sshHost}...`);
-    await sshService.deployContainer(sshHost, sshUser, sshPassword, fullImageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, (log) => addLog(job, log));
-    addLog(job, 'Deployment completed successfully!');
+    addLog(jobId, `Connecting to server ${sshHost}...`);
+    await sshService.deployContainer(sshHost, sshUser, sshPassword, fullImageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, (log) => addLog(jobId, log));
+    addLog(jobId, 'Deployment completed successfully!');
 
     job.status = 'completed';
+    await updateJobInDB(jobId, job.status, job.logs);
+
+    // Record tag in history
+    const imageKey = `${dockerHubUsername}/${imageName}`;
+    await db.addImageTag(imageKey, imageTag, jobId);
+
+    // Remove from active jobs
+    activeJobs.delete(jobId);
   } catch (error) {
-    addLog(job, `ERROR: ${error.message}`);
+    addLog(jobId, `ERROR: ${error.message}`);
     job.status = 'failed';
+    await updateJobInDB(jobId, job.status, job.logs);
+    activeJobs.delete(jobId);
   }
 }
 
-function addLog(job, message) {
+function addLog(jobId, message) {
   const timestamp = new Date().toISOString();
-  job.logs.push(`[${timestamp}] ${message}`);
-  console.log(`[Job ${job.id}] ${message}`);
+  const job = activeJobs.get(jobId);
+  if (job) {
+    job.logs.push(`[${timestamp}] ${message}`);
+  }
+  console.log(`[Job ${jobId}] ${message}`);
 }
 
-// Start server
-app.listen(PORT, () => {
-  console.log(`CI/CD Server running on http://localhost:${PORT}`);
-});
+async function updateJobInDB(jobId, status, logs) {
+  try {
+    await db.updateJob(jobId, status, logs);
+  } catch (error) {
+    console.error(`Failed to update job ${jobId} in database:`, error);
+  }
+}
+
+// Initialize database and start server
+async function startServer() {
+  try {
+    await db.initializeDatabase();
+    app.listen(PORT, () => {
+      console.log(`CI/CD Server running on http://localhost:${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+}
+
+startServer();
