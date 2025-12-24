@@ -4,9 +4,14 @@ const path = require('path');
 
 const docker = new Docker();
 
-async function buildImage(projectPath, imageName, buildPlatform, logCallback) {
+async function buildImage(projectPath, imageName, buildPlatform, dockerfileName, contextPath, logCallback) {
   return new Promise((resolve, reject) => {
-    const tarStream = tar.pack(projectPath);
+    // Use contextPath (defaults to '.') to determine the build context
+    const effectiveContextPath = contextPath && contextPath.trim() !== '' ? contextPath : '.';
+    const buildContextPath = path.join(projectPath, effectiveContextPath);
+
+    logCallback(`Build context path: ${buildContextPath}`);
+    const tarStream = tar.pack(buildContextPath);
 
     // Build options with image name
     const buildOptions = { t: imageName };
@@ -15,6 +20,19 @@ async function buildImage(projectPath, imageName, buildPlatform, logCallback) {
     if (buildPlatform) {
       buildOptions.platform = buildPlatform;
       logCallback(`Building for platform: ${buildPlatform}`);
+    }
+
+    // Add custom dockerfile if specified
+    // Dockerfile path is relative to projectPath, but Docker API expects it relative to build context
+    if (dockerfileName && dockerfileName.trim() !== '') {
+      // Calculate absolute path of Dockerfile
+      const absoluteDockerfilePath = path.join(projectPath, dockerfileName);
+
+      // Calculate relative path from build context to Dockerfile
+      const relativeDockerfilePath = path.relative(buildContextPath, absoluteDockerfilePath);
+
+      buildOptions.dockerfile = relativeDockerfilePath;
+      logCallback(`Using Dockerfile: ${dockerfileName} (resolved to: ${relativeDockerfilePath} relative to context)`);
     }
 
     docker.buildImage(tarStream, buildOptions, (err, stream) => {

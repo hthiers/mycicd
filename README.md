@@ -5,15 +5,21 @@ A lightweight web-based CI/CD tool for building Docker images, pushing them to D
 ## Features
 
 - Build Docker images from your projects
+  - Custom Dockerfile paths (e.g., `./web/Dockerfile.prod`)
+  - Custom build context paths for subfolder builds
+  - Multi-platform builds (e.g., linux/amd64)
 - Push images to Docker Hub
 - Deploy containers to remote servers via SSH
-- Real-time job monitoring and logs
+- Real-time job monitoring with collapsible logs
+- Project configuration management with encryption
+- Tag history and duplicate detection
+- MySQL database for persistent storage
 - Simple web interface
-- In-memory job history
 
 ## Prerequisites
 
 - Node.js (v14 or higher)
+- **MySQL** (running locally on port 3306, default credentials: root/root)
 - Docker installed locally (for building images)
 - Docker installed on remote server (for deployment)
 - Docker Hub account
@@ -44,24 +50,37 @@ http://localhost:3000
 ## Usage
 
 1. **Prepare Your Project**:
-   - Ensure your project has a `Dockerfile` in its root directory
+   - Ensure your project has a Dockerfile (can be in root or subdirectory)
    - Note the absolute path to your project directory
 
 2. **Fill in the Deployment Form**:
+
+   **Build Configuration:**
    - **Project Path**: Absolute path to your project (e.g., `/Users/username/my-app`)
+   - **Dockerfile Path** (optional): Relative path to Dockerfile (e.g., `./web/Dockerfile.prod`, defaults to `Dockerfile`)
+   - **Context Path** (optional): Build context relative to project (e.g., `./web`, defaults to `.`)
    - **Image Name**: Name for your Docker image (e.g., `my-app`)
    - **Image Tag**: Version tag (e.g., `latest`, `v1.0.0`)
+   - **Build Platform** (optional): Target platform (e.g., `linux/amd64`)
    - **Docker Hub Username**: Your Docker Hub username
    - **Docker Hub Password**: Your Docker Hub password
+
+   **Deployment Configuration:**
    - **SSH Host**: IP or hostname of your deployment server
    - **SSH User**: SSH username (e.g., `root`, `ubuntu`)
-   - **SSH Password**: SSH password
+   - **SSH Password** OR **SSH Private Key**: Authentication method
+   - **SSH Passphrase** (optional): If your key is encrypted
+
+   **Execution Configuration:**
    - **Container Name**: Name for the container on the remote server
+   - **Host Port/Container Port** (optional): Port mapping
+   - **Environment Variables** (optional): One per line
 
 3. **Start Deployment**:
    - Click "Start Deployment"
-   - Monitor progress in the "Recent Jobs" section
-   - Logs will update in real-time
+   - Monitor progress in the "Recent Jobs" section (last 3 jobs shown)
+   - Click "Show Logs" to view real-time logs
+   - Logs update automatically every 5 seconds
 
 ## How It Works
 
@@ -83,14 +102,22 @@ Start a new deployment job.
 ```json
 {
   "projectPath": "/path/to/project",
+  "dockerfileName": "./web/Dockerfile.prod",
+  "contextPath": "./web",
   "imageName": "my-app",
   "imageTag": "latest",
+  "buildPlatform": "linux/amd64",
   "dockerHubUsername": "username",
   "dockerHubPassword": "password",
   "sshHost": "192.168.1.100",
   "sshUser": "root",
   "sshPassword": "password",
-  "containerName": "my-app-container"
+  "sshPrivateKey": "-----BEGIN OPENSSH PRIVATE KEY-----...",
+  "sshPassphrase": "key-passphrase",
+  "containerName": "my-app-container",
+  "hostPort": "80",
+  "containerPort": "8080",
+  "envVars": "NODE_ENV=production\nPORT=8080"
 }
 ```
 
@@ -103,40 +130,70 @@ Start a new deployment job.
 ```
 
 ### GET /api/jobs
-Get all jobs.
+Get recent jobs (last 3, merges in-memory active jobs with database).
 
 ### GET /api/jobs/:id
-Get a specific job by ID.
+Get a specific job by ID (returns in-memory data for active jobs).
+
+### GET /api/projects
+Get all saved projects (encrypted).
+
+### POST /api/projects
+Create or update a project with encryption.
+
+### POST /api/projects/:id/decrypt
+Decrypt and load a project configuration.
+
+### DELETE /api/projects/:id
+Delete a project.
 
 ## Security Considerations
 
-This is a basic implementation intended for personal use or development environments. For production use, consider:
+**Current Security Features:**
+- ✅ Master password encryption for stored projects (AES-256-GCM)
+- ✅ SSH key authentication support (more secure than passwords)
+- ✅ MySQL database with utf8mb4 support
+- ✅ Credentials encrypted at rest
+- ✅ No credentials in job logs
 
-- Using environment variables or a secure vault for credentials
-- Implementing user authentication
-- Using SSH keys instead of passwords
-- Adding HTTPS support
+**For production use, additionally consider:**
+- Using environment variables for database credentials
+- Implementing user authentication and authorization
+- Adding HTTPS support (reverse proxy with nginx/caddy)
 - Implementing rate limiting
 - Adding input validation and sanitization
-- Storing credentials encrypted
-- Using a proper database instead of in-memory storage
+- Using a dedicated secrets management system (HashiCorp Vault, AWS Secrets Manager)
+- Database backups and disaster recovery
+- Monitoring and alerting
 
 ## Customization
 
+### Dockerfile and Build Context
+The tool supports custom Dockerfile paths and build contexts via the UI:
+
+- **Dockerfile Path**: Specify path relative to project (e.g., `./docker/Dockerfile.prod`)
+- **Context Path**: Specify build context relative to project (e.g., `./backend`)
+
+**Example:** Build from `./web` folder with `Dockerfile.prod`:
+```
+Project Path: /Users/username/myproject
+Dockerfile Path: ./web/Dockerfile.prod
+Context Path: ./web
+```
+
+Equivalent to: `docker build -f ./web/Dockerfile.prod -t image ./web`
+
 ### Container Run Options
-Currently, containers are started with basic `docker run -d` command. To add custom options (ports, volumes, environment variables), modify the deployment command in `services/ssh.js`:
+Port mapping and environment variables can be configured in the UI. For advanced options (volumes, networks, restart policies), modify the deployment command in `services/ssh.js`:
 
 ```javascript
-// Example with port mapping and environment variables
+// Example with additional options
 await executeCommand(
   ssh,
-  `docker run -d --name ${containerName} -p 80:8080 -e NODE_ENV=production ${imageName}`,
+  `docker run -d --name ${containerName} --restart unless-stopped -v /data:/app/data ${imageName}`,
   logCallback
 );
 ```
-
-### Build Context
-The tool builds images from the entire project directory. To customize build context or use a different Dockerfile, modify `services/docker.js`.
 
 ## Troubleshooting
 

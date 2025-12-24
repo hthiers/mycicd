@@ -211,6 +211,10 @@
     .section-content.collapsed {
       display: none;
     }
+
+    .toggle-logs-btn:hover {
+      background: #555 !important;
+    }
   </style>
 </head>
 <body>
@@ -230,6 +234,7 @@
 
       <div style="display: flex; gap: 10px; margin-top: 10px;">
         <button type="button" id="loadProjectBtn" style="background: #2196F3; flex: 1;">Load Project</button>
+        <button type="button" id="saveChangesBtn" style="background: #FF9800; flex: 1;" disabled>Save Changes</button>
         <button type="button" id="saveProjectBtn" style="background: #4CAF50; flex: 1;">Save as Project</button>
         <button type="button" id="deleteProjectBtn" style="background: #f44336; flex: 1;">Delete Project</button>
       </div>
@@ -249,6 +254,16 @@
             <div class="form-group">
               <label>Project Path (absolute path to Dockerfile directory):</label>
               <input type="text" id="projectPath" required placeholder="/path/to/your/project">
+            </div>
+
+            <div class="form-group">
+              <label>Dockerfile Path (optional, relative to Project Path, defaults to "Dockerfile"):</label>
+              <input type="text" id="dockerfileName" placeholder="Dockerfile or ./web/Dockerfile.prod">
+            </div>
+
+            <div class="form-group">
+              <label>Context Path (optional, relative to Project Path, defaults to "."):</label>
+              <input type="text" id="contextPath" placeholder=". or ./web">
             </div>
 
             <div class="form-group">
@@ -368,8 +383,15 @@
     const projectMessageDiv = document.getElementById('projectMessage');
     const projectSelect = document.getElementById('projectSelect');
     const loadProjectBtn = document.getElementById('loadProjectBtn');
+    const saveChangesBtn = document.getElementById('saveChangesBtn');
     const saveProjectBtn = document.getElementById('saveProjectBtn');
     const deleteProjectBtn = document.getElementById('deleteProjectBtn');
+
+    // Track currently loaded project
+    let currentProject = { id: null, name: null };
+
+    // Track which job logs are currently visible
+    const visibleJobLogs = new Set();
 
     // Project Management Functions
     function showProjectMessage(msg, type) {
@@ -401,6 +423,8 @@
     function getFormData() {
       return {
         projectPath: document.getElementById('projectPath').value,
+        dockerfileName: document.getElementById('dockerfileName').value,
+        contextPath: document.getElementById('contextPath').value,
         imageName: document.getElementById('imageName').value,
         imageTag: document.getElementById('imageTag').value,
         buildPlatform: document.getElementById('buildPlatform').value,
@@ -420,6 +444,8 @@
 
     function setFormData(config) {
       document.getElementById('projectPath').value = config.projectPath || '';
+      document.getElementById('dockerfileName').value = config.dockerfileName || '';
+      document.getElementById('contextPath').value = config.contextPath || '';
       document.getElementById('imageName').value = config.imageName || '';
       document.getElementById('imageTag').value = config.imageTag || '';
       document.getElementById('buildPlatform').value = config.buildPlatform || '';
@@ -457,7 +483,41 @@
 
         if (response.ok) {
           setFormData(result.config);
+          currentProject = { id: result.id, name: result.name };
+          saveChangesBtn.disabled = false;
           showProjectMessage(`Project "${result.name}" loaded successfully!`, 'success');
+        } else {
+          showProjectMessage(result.error, 'error');
+        }
+      } catch (error) {
+        showProjectMessage(`Error: ${error.message}`, 'error');
+      }
+    });
+
+    saveChangesBtn.addEventListener('click', async () => {
+      if (!currentProject.id || !currentProject.name) {
+        showProjectMessage('No project loaded. Use "Save as Project" to create a new project.', 'error');
+        return;
+      }
+
+      const masterPassword = prompt('Enter master password to encrypt sensitive data:');
+      if (!masterPassword) return;
+
+      const config = getFormData();
+
+      try {
+        const response = await fetch('/api/projects', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: currentProject.id, name: currentProject.name, masterPassword, config })
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+          showProjectMessage(`Changes saved to "${currentProject.name}"!`, 'success');
+          await loadProjects();
+          projectSelect.value = currentProject.id;
         } else {
           showProjectMessage(result.error, 'error');
         }
@@ -491,6 +551,8 @@
         const result = await response.json();
 
         if (response.ok) {
+          currentProject = { id: result.id, name: projectName };
+          saveChangesBtn.disabled = false;
           showProjectMessage(result.message, 'success');
           await loadProjects();
           projectSelect.value = result.id;
@@ -519,6 +581,8 @@
         const result = await response.json();
 
         if (response.ok) {
+          currentProject = { id: null, name: null };
+          saveChangesBtn.disabled = true;
           showProjectMessage(result.message, 'success');
           await loadProjects();
           projectSelect.value = '';
@@ -527,6 +591,14 @@
         }
       } catch (error) {
         showProjectMessage(`Error: ${error.message}`, 'error');
+      }
+    });
+
+    // Handle project select dropdown change
+    projectSelect.addEventListener('change', () => {
+      if (!projectSelect.value) {
+        currentProject = { id: null, name: null };
+        saveChangesBtn.disabled = true;
       }
     });
 
@@ -668,7 +740,9 @@
           return;
         }
 
-        jobsDiv.innerHTML = jobs.reverse().map(job => `
+        jobsDiv.innerHTML = jobs.reverse().map(job => {
+          const isVisible = visibleJobLogs.has(job.id);
+          return `
           <div class="job">
             <div class="job-header">
               <div class="job-info">
@@ -676,21 +750,50 @@
                 ${job.config.imageName}:${job.config.imageTag}${job.config.buildPlatform ? ` [${job.config.buildPlatform}]` : ''} → ${job.config.sshHost}
                 ${job.config.hostPort && job.config.containerPort ? ` (${job.config.hostPort}:${job.config.containerPort})` : ''}
               </div>
-              <span class="status ${job.status}">${job.status.toUpperCase()}</span>
+              <div style="display: flex; gap: 10px; align-items: center;">
+                <span class="status ${job.status}">${job.status.toUpperCase()}</span>
+                ${job.logs.length > 0 ? `<button class="toggle-logs-btn" data-job-id="${job.id}" style="background: #666; color: white; padding: 4px 12px; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">${isVisible ? 'Hide Logs' : 'Show Logs'}</button>` : ''}
+              </div>
             </div>
             <div class="job-info" style="margin-bottom: 10px;">
               ${new Date(job.createdAt).toLocaleString()}
             </div>
             ${job.logs.length > 0 ? `
-              <div class="logs">${job.logs.join('\n')}</div>
+              <div class="logs" id="logs-${job.id}" style="display: ${isVisible ? 'block' : 'none'};">${job.logs.join('\n')}</div>
             ` : '<p style="color: #999; font-size: 13px;">No logs yet</p>'}
           </div>
-        `).join('');
+        `;
+        }).join('');
 
-        // Scroll all log containers to bottom
+        // Add click handlers for toggle buttons
         setTimeout(() => {
-          document.querySelectorAll('.logs').forEach(logDiv => {
-            logDiv.scrollTop = logDiv.scrollHeight;
+          document.querySelectorAll('.toggle-logs-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+              const jobId = parseInt(btn.getAttribute('data-job-id'));
+              const logsDiv = document.getElementById(`logs-${jobId}`);
+
+              if (logsDiv.style.display === 'none') {
+                logsDiv.style.display = 'block';
+                btn.textContent = 'Hide Logs';
+                visibleJobLogs.add(jobId);
+                // Scroll to bottom when showing logs
+                setTimeout(() => {
+                  logsDiv.scrollTop = logsDiv.scrollHeight;
+                }, 0);
+              } else {
+                logsDiv.style.display = 'none';
+                btn.textContent = 'Show Logs';
+                visibleJobLogs.delete(jobId);
+              }
+            });
+          });
+
+          // Scroll visible logs to bottom
+          visibleJobLogs.forEach(jobId => {
+            const logsDiv = document.getElementById(`logs-${jobId}`);
+            if (logsDiv) {
+              logsDiv.scrollTop = logsDiv.scrollHeight;
+            }
           });
         }, 0);
       } catch (error) {

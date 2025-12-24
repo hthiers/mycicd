@@ -16,16 +16,17 @@ async function initializeDatabase() {
     // First, connect without database to create it
     const connection = await mysql.createConnection(DB_CONFIG);
 
-    // Create database if it doesn't exist
-    await connection.query(`CREATE DATABASE IF NOT EXISTS ${DB_NAME}`);
+    // Create database if it doesn't exist with utf8mb4 charset
+    await connection.query(`CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
     console.log(`Database '${DB_NAME}' ready`);
 
     await connection.end();
 
-    // Now create pool with database
+    // Now create pool with database and utf8mb4 charset
     pool = mysql.createPool({
       ...DB_CONFIG,
       database: DB_NAME,
+      charset: 'utf8mb4',
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0
@@ -45,10 +46,40 @@ async function createTables() {
   const connection = await pool.getConnection();
 
   try {
+    // Migrate existing tables to utf8mb4
+    try {
+      await connection.query(`ALTER DATABASE ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      console.log('Database charset set to utf8mb4');
+    } catch (e) {
+      // Ignore if already set
+    }
+
+    // Convert existing tables to utf8mb4
+    try {
+      await connection.query(`ALTER TABLE projects CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      console.log('Converted projects table to utf8mb4');
+    } catch (e) {
+      // Table doesn't exist yet, will be created below
+    }
+
+    try {
+      await connection.query(`ALTER TABLE jobs CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      console.log('Converted jobs table to utf8mb4');
+    } catch (e) {
+      // Table doesn't exist yet, will be created below
+    }
+
+    try {
+      await connection.query(`ALTER TABLE image_tags CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`);
+      console.log('Converted image_tags table to utf8mb4');
+    } catch (e) {
+      // Table doesn't exist yet, will be created below
+    }
+
     // Check if we need to migrate from JSON to TEXT
     try {
       await connection.query(`
-        ALTER TABLE projects MODIFY COLUMN config TEXT NOT NULL
+        ALTER TABLE projects MODIFY COLUMN config TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL
       `);
       console.log('Migrated projects.config from JSON to TEXT');
     } catch (e) {
@@ -57,12 +88,12 @@ async function createTables() {
 
     try {
       await connection.query(`
-        ALTER TABLE jobs MODIFY COLUMN logs TEXT
+        ALTER TABLE jobs MODIFY COLUMN logs MEDIUMTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
       `);
       await connection.query(`
-        ALTER TABLE jobs MODIFY COLUMN config TEXT
+        ALTER TABLE jobs MODIFY COLUMN config MEDIUMTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
       `);
-      console.log('Migrated jobs columns from JSON to TEXT');
+      console.log('Migrated jobs columns to MEDIUMTEXT');
     } catch (e) {
       // Table doesn't exist yet, will be created below
     }
@@ -71,39 +102,39 @@ async function createTables() {
     await connection.query(`
       CREATE TABLE IF NOT EXISTS projects (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) NOT NULL,
-        config TEXT NOT NULL,
+        name VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+        config TEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         INDEX idx_name (name)
-      )
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     // Jobs table
     await connection.query(`
       CREATE TABLE IF NOT EXISTS jobs (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        status VARCHAR(50) NOT NULL,
-        logs TEXT,
-        config TEXT,
+        status VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+        logs MEDIUMTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
+        config MEDIUMTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_status (status),
         INDEX idx_created (created_at)
-      )
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     // Image tags table
     await connection.query(`
       CREATE TABLE IF NOT EXISTS image_tags (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        image_key VARCHAR(255) NOT NULL,
-        tag VARCHAR(255) NOT NULL,
+        image_key VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+        tag VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
         job_id INT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_image_key (image_key),
         INDEX idx_tag (tag),
         UNIQUE KEY unique_image_tag (image_key, tag, created_at)
-      )
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
     console.log('Database tables created/verified');
@@ -160,15 +191,17 @@ async function deleteProject(id) {
 async function createJob(config) {
   const [result] = await pool.query(
     'INSERT INTO jobs (status, logs, config) VALUES (?, ?, ?)',
-    ['pending', JSON.stringify([]), JSON.stringify(config)]
+    ['pending', '', JSON.stringify(config)]
   );
   return result.insertId;
 }
 
 async function updateJob(id, status, logs) {
+  // Store logs as plain string (joined by newlines) instead of JSON array
+  const logsString = Array.isArray(logs) ? logs.join('\n') : logs;
   await pool.query(
     'UPDATE jobs SET status = ?, logs = ? WHERE id = ?',
-    [status, JSON.stringify(logs), id]
+    [status, logsString, id]
   );
 }
 
@@ -180,18 +213,20 @@ async function getJob(id) {
   return {
     id: job.id,
     status: job.status,
-    logs: JSON.parse(job.logs),
+    // Parse logs: split string by newlines, filter empty lines
+    logs: job.logs ? job.logs.split('\n').filter(line => line.trim() !== '') : [],
     config: JSON.parse(job.config),
     createdAt: job.created_at
   };
 }
 
 async function getAllJobs() {
-  const [rows] = await pool.query('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 50');
+  const [rows] = await pool.query('SELECT * FROM jobs ORDER BY created_at DESC LIMIT 3');
   return rows.map(row => ({
     id: row.id,
     status: row.status,
-    logs: JSON.parse(row.logs),
+    // Parse logs: split string by newlines, filter empty lines
+    logs: row.logs ? row.logs.split('\n').filter(line => line.trim() !== '') : [],
     config: JSON.parse(row.config),
     createdAt: row.created_at
   }));

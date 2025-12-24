@@ -18,7 +18,7 @@ const activeJobs = new Map();
 
 // API Routes
 app.post('/api/deploy', async (req, res) => {
-  const { projectPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars } = req.body;
+  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars } = req.body;
 
   // Validate required fields
   if (!projectPath || !imageName || !imageTag || !dockerHubUsername || !dockerHubPassword || !sshHost || !sshUser || !containerName) {
@@ -31,7 +31,7 @@ app.post('/api/deploy', async (req, res) => {
   }
 
   try {
-    const config = { projectPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform };
+    const config = { projectPath, dockerfileName, contextPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform };
     const jobId = await db.createJob(config);
 
     // Store active job in memory for real-time updates
@@ -40,7 +40,7 @@ app.post('/api/deploy', async (req, res) => {
     res.json({ jobId, message: 'Deployment started' });
 
     // Run deployment asynchronously
-    runDeployment(jobId, { projectPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars });
+    runDeployment(jobId, { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars });
   } catch (error) {
     res.status(500).json({ error: `Failed to create job: ${error.message}` });
   }
@@ -49,7 +49,22 @@ app.post('/api/deploy', async (req, res) => {
 app.get('/api/jobs', async (req, res) => {
   try {
     const jobs = await db.getAllJobs();
-    res.json(jobs);
+
+    // Merge in-memory active job data with database data
+    const mergedJobs = jobs.map(job => {
+      const activeJob = activeJobs.get(job.id);
+      if (activeJob) {
+        // Use in-memory data for active jobs (more up-to-date)
+        return {
+          ...job,
+          status: activeJob.status,
+          logs: activeJob.logs
+        };
+      }
+      return job;
+    });
+
+    res.json(mergedJobs);
   } catch (error) {
     res.status(500).json({ error: `Failed to fetch jobs: ${error.message}` });
   }
@@ -57,10 +72,22 @@ app.get('/api/jobs', async (req, res) => {
 
 app.get('/api/jobs/:id', async (req, res) => {
   try {
-    const job = await db.getJob(parseInt(req.params.id));
+    const jobId = parseInt(req.params.id);
+    const job = await db.getJob(jobId);
     if (!job) {
       return res.status(404).json({ error: 'Job not found' });
     }
+
+    // Check if job is active in memory (has more up-to-date logs)
+    const activeJob = activeJobs.get(jobId);
+    if (activeJob) {
+      return res.json({
+        ...job,
+        status: activeJob.status,
+        logs: activeJob.logs
+      });
+    }
+
     res.json(job);
   } catch (error) {
     res.status(500).json({ error: `Failed to fetch job: ${error.message}` });
@@ -91,6 +118,8 @@ app.post('/api/projects', async (req, res) => {
     // Encrypt sensitive fields
     const encryptedConfig = {
       projectPath: config.projectPath,
+      dockerfileName: config.dockerfileName,
+      contextPath: config.contextPath,
       imageName: config.imageName,
       imageTag: config.imageTag,
       buildPlatform: config.buildPlatform,
@@ -143,6 +172,8 @@ app.post('/api/projects/:id/decrypt', async (req, res) => {
     // Decrypt sensitive fields
     const decryptedConfig = {
       projectPath: project.config.projectPath,
+      dockerfileName: project.config.dockerfileName,
+      contextPath: project.config.contextPath,
       imageName: project.config.imageName,
       imageTag: project.config.imageTag,
       buildPlatform: project.config.buildPlatform,
@@ -211,7 +242,7 @@ app.get('/api/tags/:username/:imageName/:tag/exists', async (req, res) => {
 
 // Deployment function
 async function runDeployment(jobId, config) {
-  const { projectPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars } = config;
+  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars } = config;
   const fullImageName = `${dockerHubUsername}/${imageName}:${imageTag}`;
 
   // Get active job from memory
@@ -224,7 +255,7 @@ async function runDeployment(jobId, config) {
 
     // Step 1: Build Docker image
     addLog(jobId, 'Building Docker image...');
-    await dockerService.buildImage(projectPath, fullImageName, buildPlatform, (log) => addLog(jobId, log));
+    await dockerService.buildImage(projectPath, fullImageName, buildPlatform, dockerfileName, contextPath, (log) => addLog(jobId, log));
     addLog(jobId, `Successfully built image: ${fullImageName}`);
 
     // Step 2: Push to Docker Hub
@@ -255,10 +286,9 @@ async function runDeployment(jobId, config) {
 }
 
 function addLog(jobId, message) {
-  const timestamp = new Date().toISOString();
   const job = activeJobs.get(jobId);
   if (job) {
-    job.logs.push(`[${timestamp}] ${message}`);
+    job.logs.push(message);
   }
   console.log(`[Job ${jobId}] ${message}`);
 }
