@@ -7,16 +7,21 @@
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
-  "keywords": ["cicd", "docker", "deployment"],
+  "keywords": [
+    "cicd",
+    "docker",
+    "deployment"
+  ],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.18.2",
-    "dockerode": "^4.0.0",
-    "node-ssh": "^13.1.0",
     "body-parser": "^1.20.2",
-    "tar-fs": "^3.0.4",
-    "mysql2": "^3.6.5"
+    "dockerode": "^4.0.0",
+    "dotenv": "^17.2.3",
+    "express": "^4.18.2",
+    "mysql2": "^3.6.5",
+    "node-ssh": "^13.1.0",
+    "tar-fs": "^3.0.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
