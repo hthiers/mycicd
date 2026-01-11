@@ -42,14 +42,55 @@ async function buildImage(projectPath, imageName, buildPlatform, dockerfileName,
 
       docker.modem.followProgress(stream, onFinished, onProgress);
 
-      function onFinished(err, output) {
+      async function onFinished(err, output) {
         if (err) {
           return reject(err);
         }
-        resolve();
+
+        // Verify the image was created and tagged
+        try {
+          const image = docker.getImage(imageName);
+          await image.inspect();
+          logCallback(`Verified image exists: ${imageName}`);
+          resolve();
+        } catch (inspectErr) {
+          // Image doesn't exist with the tag, try to find the built image ID and tag it
+          logCallback(`Image tag verification failed, attempting to tag from build output...`);
+
+          // Look for the image ID in the build output
+          let imageId = null;
+          if (output && Array.isArray(output)) {
+            for (const event of output) {
+              if (event.aux && event.aux.ID) {
+                imageId = event.aux.ID;
+                break;
+              }
+            }
+          }
+
+          if (imageId) {
+            try {
+              logCallback(`Found built image ID: ${imageId}, tagging as ${imageName}`);
+              const builtImage = docker.getImage(imageId);
+              await builtImage.tag({ repo: imageName.split(':')[0], tag: imageName.split(':')[1] || 'latest' });
+              logCallback(`Successfully tagged image: ${imageName}`);
+              resolve();
+            } catch (tagErr) {
+              reject(new Error(`Failed to tag image: ${tagErr.message}`));
+            }
+          } else {
+            reject(new Error(`Image was built but could not be found or tagged: ${inspectErr.message}`));
+          }
+        }
       }
 
       function onProgress(event) {
+        // Check for errors in the progress stream
+        if (event.error || event.errorDetail) {
+          const errorMsg = event.error || event.errorDetail.message || 'Unknown build error';
+          return reject(new Error(errorMsg));
+        }
+
         if (event.stream) {
           logCallback(event.stream.trim());
         } else if (event.status) {
@@ -82,6 +123,12 @@ async function pushImage(imageName, username, password, logCallback) {
       }
 
       function onProgress(event) {
+        // Check for errors in the progress stream
+        if (event.error || event.errorDetail) {
+          const errorMsg = event.error || event.errorDetail.message || 'Unknown push error';
+          return reject(new Error(errorMsg));
+        }
+
         if (event.status) {
           const msg = event.progress ? `${event.status} ${event.progress}` : event.status;
           logCallback(msg);
