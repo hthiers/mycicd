@@ -252,7 +252,7 @@
           </div>
           <div class="section-content" data-content="build">
             <div class="form-group">
-              <label>Project Path (absolute path to Dockerfile directory):</label>
+              <label>Project Path (absolute path to Dockerfile directory): <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="projectPath" required placeholder="/path/to/your/project">
             </div>
 
@@ -267,13 +267,13 @@
             </div>
 
             <div class="form-group">
-              <label>Image Name:</label>
+              <label>Image Name: <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="imageName" required placeholder="my-app">
             </div>
 
             <div class="form-group">
-              <label>Image Tag:</label>
-              <input type="text" id="imageTag" required placeholder="latest">
+              <label>Image Tag: <span style="color: #d32f2f;">*</span></label>
+              <input type="text" id="imageTag" required placeholder="latest" value="latest">
               <div id="tagWarning" style="display: none; color: #d32f2f; font-size: 13px; margin-top: 5px;">
                 ⚠️ This tag already exists! Consider using a new tag to avoid overwriting.
               </div>
@@ -289,12 +289,12 @@
             </div>
 
             <div class="form-group">
-              <label>Docker Hub Username:</label>
+              <label>Docker Hub Username: <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="dockerHubUsername" required>
             </div>
 
             <div class="form-group">
-              <label>Docker Hub Password:</label>
+              <label>Docker Hub Password: <span style="color: #d32f2f;">*</span></label>
               <input type="password" id="dockerHubPassword" required>
             </div>
           </div>
@@ -308,22 +308,22 @@
           </div>
           <div class="section-content" data-content="deployment">
             <div class="form-group">
-              <label>SSH Host:</label>
+              <label>SSH Host: <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="sshHost" required placeholder="192.168.1.100">
             </div>
 
             <div class="form-group">
-              <label>SSH User:</label>
+              <label>SSH User: <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="sshUser" required placeholder="root">
             </div>
 
             <div class="form-group">
-              <label>SSH Password (required if not using SSH key):</label>
+              <label>SSH Password (required if not using SSH key): <span style="color: #d32f2f;">*</span></label>
               <input type="password" id="sshPassword" placeholder="Leave empty if using SSH key">
             </div>
 
             <div class="form-group">
-              <label>SSH Private Key (required if not using password):</label>
+              <label>SSH Private Key (required if not using password): <span style="color: #d32f2f;">*</span></label>
               <textarea id="sshPrivateKey" rows="6" placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;Paste your private key here...&#10;-----END OPENSSH PRIVATE KEY-----"></textarea>
             </div>
 
@@ -342,7 +342,7 @@
           </div>
           <div class="section-content" data-content="execution">
             <div class="form-group">
-              <label>Container Name (on remote server):</label>
+              <label>Container Name (on remote server): <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="containerName" required placeholder="my-app-container">
             </div>
 
@@ -359,6 +359,11 @@
             <div class="form-group">
               <label>Environment Variables (optional, one per line):</label>
               <textarea id="envVars" rows="4" placeholder="NODE_ENV=production&#10;PORT=8080&#10;API_KEY=your-api-key"></textarea>
+            </div>
+
+            <div class="form-group">
+              <label>Volumes (optional, one per line):</label>
+              <textarea id="volumes" rows="4" placeholder="my-volume:/app/data&#10;/host/path:/container/path&#10;config-volume:/etc/config:ro"></textarea>
             </div>
           </div>
         </div>
@@ -438,7 +443,8 @@
         containerName: document.getElementById('containerName').value,
         hostPort: document.getElementById('hostPort').value,
         containerPort: document.getElementById('containerPort').value,
-        envVars: document.getElementById('envVars').value
+        envVars: document.getElementById('envVars').value,
+        volumes: document.getElementById('volumes').value
       };
     }
 
@@ -460,6 +466,7 @@
       document.getElementById('hostPort').value = config.hostPort || '';
       document.getElementById('containerPort').value = config.containerPort || '';
       document.getElementById('envVars').value = config.envVars || '';
+      document.getElementById('volumes').value = config.volumes || '';
     }
 
     loadProjectBtn.addEventListener('click', async () => {

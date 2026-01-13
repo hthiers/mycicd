@@ -20,7 +20,7 @@ const activeJobs = new Map();
 
 // API Routes
 app.post('/api/deploy', async (req, res) => {
-  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars } = req.body;
+  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, volumes } = req.body;
 
   // Validate required fields
   if (!projectPath || !imageName || !imageTag || !dockerHubUsername || !dockerHubPassword || !sshHost || !sshUser || !containerName) {
@@ -33,7 +33,7 @@ app.post('/api/deploy', async (req, res) => {
   }
 
   try {
-    const config = { projectPath, dockerfileName, contextPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform };
+    const config = { projectPath, dockerfileName, contextPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform, envVars, volumes };
     const jobId = await db.createJob(config);
 
     // Store active job in memory for real-time updates
@@ -42,7 +42,7 @@ app.post('/api/deploy', async (req, res) => {
     res.json({ jobId, message: 'Deployment started' });
 
     // Run deployment asynchronously
-    runDeployment(jobId, { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars });
+    runDeployment(jobId, { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, volumes });
   } catch (error) {
     res.status(500).json({ error: `Failed to create job: ${error.message}` });
   }
@@ -135,7 +135,8 @@ app.post('/api/projects', async (req, res) => {
       containerName: config.containerName,
       hostPort: config.hostPort,
       containerPort: config.containerPort,
-      envVars: config.envVars
+      envVars: config.envVars,
+      volumes: config.volumes
     };
 
     if (id) {
@@ -189,7 +190,8 @@ app.post('/api/projects/:id/decrypt', async (req, res) => {
       containerName: project.config.containerName,
       hostPort: project.config.hostPort,
       containerPort: project.config.containerPort,
-      envVars: project.config.envVars
+      envVars: project.config.envVars,
+      volumes: project.config.volumes
     };
 
     res.json({
@@ -244,7 +246,7 @@ app.get('/api/tags/:username/:imageName/:tag/exists', async (req, res) => {
 
 // Deployment function
 async function runDeployment(jobId, config) {
-  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars } = config;
+  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, volumes } = config;
   const fullImageName = `${dockerHubUsername}/${imageName}:${imageTag}`;
 
   // Get active job from memory
@@ -267,7 +269,7 @@ async function runDeployment(jobId, config) {
 
     // Step 3: Deploy to server via SSH
     addLog(jobId, `Connecting to server ${sshHost}...`);
-    await sshService.deployContainer(sshHost, sshUser, sshPassword, fullImageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, (log) => addLog(jobId, log));
+    await sshService.deployContainer(sshHost, sshUser, sshPassword, fullImageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, volumes, (log) => addLog(jobId, log));
     addLog(jobId, 'Deployment completed successfully!');
 
     job.status = 'completed';

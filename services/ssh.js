@@ -1,6 +1,6 @@
 const { NodeSSH } = require('node-ssh');
 
-async function deployContainer(host, username, password, imageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, logCallback) {
+async function deployContainer(host, username, password, imageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, volumes, logCallback) {
   const ssh = new NodeSSH();
 
   try {
@@ -58,6 +58,18 @@ async function deployContainer(host, username, password, imageName, containerNam
         }
       });
       logCallback(`Environment variables: ${envLines.length} variable(s) set`);
+    }
+
+    // Add volumes if provided
+    if (volumes && volumes.trim()) {
+      const volumeLines = volumes.split('\n').filter(line => line.trim());
+      volumeLines.forEach(line => {
+        const trimmedLine = line.trim();
+        if (trimmedLine) {
+          dockerRunCmd += ` -v ${trimmedLine}`;
+        }
+      });
+      logCallback(`Volumes: ${volumeLines.length} volume(s) mounted`);
     }
 
     dockerRunCmd += ` ${imageName}`;
