@@ -215,6 +215,46 @@
     .toggle-logs-btn:hover {
       background: #555 !important;
     }
+
+    /* Tabs */
+    .tabs {
+      display: flex;
+      gap: 0;
+      margin-bottom: 20px;
+      border-bottom: 2px solid #ddd;
+    }
+
+    .tab-btn {
+      background: transparent;
+      color: #666;
+      padding: 12px 24px;
+      border: none;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+
+    .tab-btn:hover {
+      color: #333;
+      background: rgba(0,0,0,0.03);
+    }
+
+    .tab-btn.active {
+      color: #4CAF50;
+      border-bottom-color: #4CAF50;
+      background: transparent;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
   </style>
 </head>
 <body>
@@ -222,11 +262,11 @@
     <img src="shaefer-logo-2.png" alt="Schaefer" style="max-height: 60px; margin-bottom: 20px;">
 
     <div class="section">
-      <h2>Project Management</h2>
+      <h2>Projects</h2>
       <div id="projectMessage"></div>
 
       <div class="form-group">
-        <label>Select Project:</label>
+        <label>Select a Saved Project:</label>
         <select id="projectSelect" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
           <option value="">-- New Deployment --</option>
         </select>
@@ -240,7 +280,13 @@
       </div>
     </div>
 
-    <div class="section">
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="deploy">Deploy</button>
+      <button class="tab-btn" data-tab="jobs">Jobs</button>
+    </div>
+
+    <div id="tab-deploy" class="tab-content active">
+      <div class="section">
       <h2>Deploy New Build</h2>
       <div id="message"></div>
       <form id="deployForm">
@@ -377,15 +423,23 @@
 
         <button type="submit" id="deployBtn">Start Deployment</button>
       </form>
+      </div>
     </div>
 
-    <div class="section">
-      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-        <h2 style="margin: 0;">Recent Jobs</h2>
-        <button class="refresh-btn" onclick="loadJobs()">Refresh</button>
+    <div id="tab-jobs" class="tab-content">
+      <div class="section">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+          <h2 style="margin: 0;">Recent Jobs</h2>
+          <button class="refresh-btn" onclick="loadJobs()">Refresh</button>
+        </div>
+        <div id="jobs"></div>
       </div>
-      <div id="jobs"></div>
     </div>
+
+    <footer style="text-align: center; padding: 20px; color: #888; font-size: 13px;">
+      <p>Schaefer - Simple Docker Pipelines</p>
+      <p>2026 Hernán Thiers</p>
+    </footer>
   </div>
 
   <script>
@@ -404,6 +458,26 @@
 
     // Track which job logs are currently visible
     const visibleJobLogs = new Set();
+
+    // Tab switching functionality
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const tabName = btn.getAttribute('data-tab');
+
+        // Update active tab button
+        document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+
+        // Update active tab content
+        document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+        document.getElementById(`tab-${tabName}`).classList.add('active');
+
+        // Refresh jobs when switching to jobs tab
+        if (tabName === 'jobs') {
+          loadJobs();
+        }
+      });
+    });
 
     // Project Management Functions
     function showProjectMessage(msg, type) {
