@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simple CI/CD Tool</title>
+  <title>Schaefer</title>
   <style>
     * {
       margin: 0;
@@ -13,7 +13,7 @@
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
-      background: #f5f5f5;
+      background: #ece6da;
       padding: 20px;
     }
 
@@ -219,7 +219,7 @@
 </head>
 <body>
   <div class="container">
-    <h1>Simple CI/CD Tool</h1>
+    <img src="shaefer-logo-2.png" alt="Schaefer" style="max-height: 60px; margin-bottom: 20px;">
 
     <div class="section">
       <h2>Project Management</h2>
@@ -246,11 +246,11 @@
       <form id="deployForm">
         <!-- Build Section -->
         <div class="collapsible-section">
-          <div class="section-header" data-section="build">
+          <div class="section-header collapsed" data-section="build">
             <h3>Build Configuration</h3>
             <span class="toggle-icon">▼</span>
           </div>
-          <div class="section-content" data-content="build">
+          <div class="section-content collapsed" data-content="build">
             <div class="form-group">
               <label>Project Path (absolute path to Dockerfile directory): <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="projectPath" required placeholder="/path/to/your/project">
@@ -302,11 +302,11 @@
 
         <!-- Deployment Section -->
         <div class="collapsible-section">
-          <div class="section-header" data-section="deployment">
+          <div class="section-header collapsed" data-section="deployment">
             <h3>Deployment Configuration</h3>
             <span class="toggle-icon">▼</span>
           </div>
-          <div class="section-content" data-content="deployment">
+          <div class="section-content collapsed" data-content="deployment">
             <div class="form-group">
               <label>SSH Host: <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="sshHost" required placeholder="192.168.1.100">
@@ -336,11 +336,11 @@
 
         <!-- Execution Section -->
         <div class="collapsible-section">
-          <div class="section-header" data-section="execution">
+          <div class="section-header collapsed" data-section="execution">
             <h3>Execution Configuration</h3>
             <span class="toggle-icon">▼</span>
           </div>
-          <div class="section-content" data-content="execution">
+          <div class="section-content collapsed" data-content="execution">
             <div class="form-group">
               <label>Container Name (on remote server): <span style="color: #d32f2f;">*</span></label>
               <input type="text" id="containerName" required placeholder="my-app-container">
@@ -359,6 +359,13 @@
             <div class="form-group">
               <label>Environment Variables (optional, one per line):</label>
               <textarea id="envVars" rows="4" placeholder="NODE_ENV=production&#10;PORT=8080&#10;API_KEY=your-api-key"></textarea>
+              <div style="margin-top: 8px;">
+                <label style="display: inline-flex; align-items: center; cursor: pointer; font-size: 13px;">
+                  <input type="checkbox" id="useEnvFile" style="width: auto; margin-right: 8px;">
+                  <span>Use env file mode</span>
+                  <span style="color: #999; margin-left: 8px; font-size: 12px;">(Recommended for special characters or large values)</span>
+                </label>
+              </div>
             </div>
 
             <div class="form-group">
@@ -444,6 +451,7 @@
         hostPort: document.getElementById('hostPort').value,
         containerPort: document.getElementById('containerPort').value,
         envVars: document.getElementById('envVars').value,
+        useEnvFile: document.getElementById('useEnvFile').checked,
         volumes: document.getElementById('volumes').value
       };
     }
@@ -466,6 +474,7 @@
       document.getElementById('hostPort').value = config.hostPort || '';
       document.getElementById('containerPort').value = config.containerPort || '';
       document.getElementById('envVars').value = config.envVars || '';
+      document.getElementById('useEnvFile').checked = config.useEnvFile || false;
       document.getElementById('volumes').value = config.volumes || '';
     }
 
