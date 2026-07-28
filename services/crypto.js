@@ -53,7 +53,48 @@ function decrypt(encryptedData, password) {
   return decrypted;
 }
 
+function encryptWithKey(text, key) {
+  if (!text) return null;
+
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
+
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+
+  const tag = cipher.getAuthTag();
+
+  // Return iv:tag:encrypted (no salt - key is used as-is, not derived)
+  return iv.toString('hex') + ':' + tag.toString('hex') + ':' + encrypted;
+}
+
+function decryptWithKey(encryptedData, key) {
+  if (!encryptedData) return null;
+
+  const parts = encryptedData.split(':');
+  if (parts.length !== 3) {
+    throw new Error('Invalid encrypted data format');
+  }
+
+  const iv = Buffer.from(parts[0], 'hex');
+  const tag = Buffer.from(parts[1], 'hex');
+  const encrypted = parts[2];
+
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, iv);
+  decipher.setAuthTag(tag);
+
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+
+  return decrypted;
+}
+
 module.exports = {
   encrypt,
-  decrypt
+  decrypt,
+  encryptWithKey,
+  decryptWithKey,
+  deriveKey,
+  KEY_LENGTH,
+  SALT_LENGTH
 };

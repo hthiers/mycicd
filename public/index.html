@@ -255,11 +255,99 @@
     .tab-content.active {
       display: block;
     }
+
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      background: #ece6da;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+
+    .auth-box {
+      background: white;
+      padding: 30px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      width: 100%;
+      max-width: 360px;
+    }
+
+    .auth-box h2 {
+      margin-bottom: 5px;
+    }
+
+    .auth-box p.subtitle {
+      color: #666;
+      font-size: 13px;
+      margin-bottom: 20px;
+    }
+
+    .top-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+
+    .logout-btn {
+      background: transparent;
+      color: #666;
+      border: 1px solid #ddd;
+      padding: 8px 16px;
+      font-size: 13px;
+    }
+
+    .logout-btn:hover {
+      background: #f5f5f5;
+    }
   </style>
 </head>
 <body>
-  <div class="container">
-    <img src="shaefer-logo-2.png" alt="Schaefer" style="max-height: 60px; margin-bottom: 20px;">
+  <div id="authOverlay" class="auth-overlay" style="display: none;">
+    <div class="auth-box">
+      <div id="setupForm" style="display: none;">
+        <h2>Create Admin Account</h2>
+        <p class="subtitle">First-time setup. This account protects your saved project credentials.</p>
+        <div id="authMessage"></div>
+        <div class="form-group">
+          <label>Username:</label>
+          <input type="text" id="setupUsername" autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label>Password (min 8 characters):</label>
+          <input type="password" id="setupPassword" autocomplete="new-password">
+        </div>
+        <div class="form-group">
+          <label>Confirm Password:</label>
+          <input type="password" id="setupPasswordConfirm" autocomplete="new-password">
+        </div>
+        <button type="button" id="setupBtn" style="width: 100%;">Create Account</button>
+      </div>
+      <div id="loginForm" style="display: none;">
+        <h2>Log In</h2>
+        <p class="subtitle">Schaefer - Simple Docker Pipelines</p>
+        <div id="loginMessage"></div>
+        <div class="form-group">
+          <label>Username:</label>
+          <input type="text" id="loginUsername" autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label>Password:</label>
+          <input type="password" id="loginPassword" autocomplete="current-password">
+        </div>
+        <button type="button" id="loginBtn" style="width: 100%;">Log In</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container" id="appContainer" style="display: none;">
+    <div class="top-bar">
+      <img src="shaefer-logo-2.png" alt="Schaefer" style="max-height: 60px;">
+      <button type="button" id="logoutBtn" class="logout-btn">Log Out</button>
+    </div>
 
     <div class="section">
       <h2>Projects</h2>
@@ -443,6 +531,127 @@
   </div>
 
   <script>
+    // Intercept 401s from API calls and drop back to the login screen
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async function(input, init) {
+      const response = await originalFetch(input, init);
+      const url = typeof input === 'string' ? input : input.url;
+      if (response.status === 401 && url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
+        showAuthOverlay();
+      }
+      return response;
+    };
+
+    const authOverlay = document.getElementById('authOverlay');
+    const appContainer = document.getElementById('appContainer');
+    const setupForm = document.getElementById('setupForm');
+    const loginForm = document.getElementById('loginForm');
+    const authMessage = document.getElementById('authMessage');
+    const loginMessage = document.getElementById('loginMessage');
+
+    function showAuthMessage(el, msg) {
+      el.innerHTML = msg ? `<div class="message error">${msg}</div>` : '';
+    }
+
+    function showAuthOverlay() {
+      appContainer.style.display = 'none';
+      authOverlay.style.display = 'flex';
+    }
+
+    function showApp() {
+      authOverlay.style.display = 'none';
+      appContainer.style.display = 'block';
+      initApp();
+    }
+
+    async function checkAuthStatus() {
+      const response = await originalFetch('/api/auth/status');
+      const status = await response.json();
+
+      if (status.authenticated) {
+        showApp();
+        return;
+      }
+
+      authOverlay.style.display = 'flex';
+      if (status.setupNeeded) {
+        setupForm.style.display = 'block';
+        loginForm.style.display = 'none';
+      } else {
+        setupForm.style.display = 'none';
+        loginForm.style.display = 'block';
+      }
+    }
+
+    document.getElementById('setupBtn').addEventListener('click', async () => {
+      const username = document.getElementById('setupUsername').value.trim();
+      const password = document.getElementById('setupPassword').value;
+      const confirmPassword = document.getElementById('setupPasswordConfirm').value;
+
+      if (!username || !password) {
+        showAuthMessage(authMessage, 'Username and password are required');
+        return;
+      }
+      if (password !== confirmPassword) {
+        showAuthMessage(authMessage, 'Passwords do not match');
+        return;
+      }
+
+      try {
+        const response = await originalFetch('/api/auth/setup', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const result = await response.json();
+
+        if (response.ok) {
+          showApp();
+        } else {
+          showAuthMessage(authMessage, result.error);
+        }
+      } catch (error) {
+        showAuthMessage(authMessage, error.message);
+      }
+    });
+
+    document.getElementById('loginBtn').addEventListener('click', async () => {
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+
+      if (!username || !password) {
+        showAuthMessage(loginMessage, 'Username and password are required');
+        return;
+      }
+
+      try {
+        const response = await originalFetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        const result = await response.json();
+
+        if (response.ok) {
+          document.getElementById('loginPassword').value = '';
+          showApp();
+        } else {
+          showAuthMessage(loginMessage, result.error);
+        }
+      } catch (error) {
+        showAuthMessage(loginMessage, error.message);
+      }
+    });
+
+    document.getElementById('logoutBtn').addEventListener('click', async () => {
+      await originalFetch('/api/auth/logout', { method: 'POST' });
+      showAuthOverlay();
+    });
+
+    let appInitialized = false;
+
+    checkAuthStatus();
+
     const form = document.getElementById('deployForm');
     const deployBtn = document.getElementById('deployBtn');
     const messageDiv = document.getElementById('message');
@@ -559,14 +768,15 @@
         return;
       }
 
-      const masterPassword = prompt('Enter master password to decrypt project:');
-      if (!masterPassword) return;
+      await loadProjectById(projectId);
+    });
 
+    async function loadProjectById(projectId, oldMasterPassword) {
       try {
         const response = await fetch(`/api/projects/${projectId}/decrypt`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ masterPassword })
+          body: JSON.stringify(oldMasterPassword ? { oldMasterPassword } : {})
         });
 
         const result = await response.json();
@@ -576,13 +786,17 @@
           currentProject = { id: result.id, name: result.name };
           saveChangesBtn.disabled = false;
           showProjectMessage(`Project "${result.name}" loaded successfully!`, 'success');
+        } else if (response.status === 409 && result.needsMigration) {
+          const password = prompt('This project was saved before login was added. Enter its old master password once to migrate it:');
+          if (!password) return;
+          await loadProjectById(projectId, password);
         } else {
           showProjectMessage(result.error, 'error');
         }
       } catch (error) {
         showProjectMessage(`Error: ${error.message}`, 'error');
       }
-    });
+    }
 
     saveChangesBtn.addEventListener('click', async () => {
       if (!currentProject.id || !currentProject.name) {
@@ -590,16 +804,13 @@
         return;
       }
 
-      const masterPassword = prompt('Enter master password to encrypt sensitive data:');
-      if (!masterPassword) return;
-
       const config = getFormData();
 
       try {
         const response = await fetch('/api/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id: currentProject.id, name: currentProject.name, masterPassword, config })
+          body: JSON.stringify({ id: currentProject.id, name: currentProject.name, config })
         });
 
         const result = await response.json();
@@ -620,22 +831,13 @@
       const projectName = prompt('Enter project name:');
       if (!projectName) return;
 
-      const masterPassword = prompt('Enter master password to encrypt sensitive data:');
-      if (!masterPassword) return;
-
-      const confirmPassword = prompt('Confirm master password:');
-      if (masterPassword !== confirmPassword) {
-        showProjectMessage('Passwords do not match!', 'error');
-        return;
-      }
-
       const config = getFormData();
 
       try {
         const response = await fetch('/api/projects', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: projectName, masterPassword, config })
+          body: JSON.stringify({ name: projectName, config })
         });
 
         const result = await response.json();
@@ -691,9 +893,6 @@
         saveChangesBtn.disabled = true;
       }
     });
-
-    // Load projects on page load
-    loadProjects();
 
     // Collapsible sections functionality
     document.querySelectorAll('.section-header').forEach(header => {
@@ -891,11 +1090,15 @@
       }
     }
 
-    // Load jobs on page load
-    loadJobs();
+    function initApp() {
+      loadProjects();
+      loadJobs();
 
-    // Auto-refresh jobs every 5 seconds
-    setInterval(loadJobs, 5000);
+      if (!appInitialized) {
+        appInitialized = true;
+        setInterval(loadJobs, 5000);
+      }
+    }
   </script>
 </body>
 </html>

@@ -2,23 +2,132 @@ require('dotenv').config();
 
 const express = require('express');
 const bodyParser = require('body-parser');
+const session = require('express-session');
 const path = require('path');
 const dockerService = require('./services/docker');
 const sshService = require('./services/ssh');
 const cryptoService = require('./services/crypto');
+const authService = require('./services/auth');
 const db = require('./services/database');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+if (!process.env.SESSION_SECRET) {
+  console.error('SESSION_SECRET is not set in .env - refusing to start');
+  process.exit(1);
+}
+
 // Middleware
 app.use(bodyParser.json());
+app.use(session({
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 12 * 60 * 60 * 1000 // 12 hours
+  }
+}));
 app.use(express.static('public'));
 
 // In-memory job tracking (for active jobs only)
 const activeJobs = new Map();
 
-// API Routes
+// In-memory DEK store, keyed by session ID. Never persisted or put in the
+// session cookie itself - cleared on logout and lost on server restart.
+const dekMap = new Map();
+
+function requireAuth(req, res, next) {
+  if (req.session.userId && dekMap.has(req.sessionID)) {
+    return next();
+  }
+  res.status(401).json({ error: 'Not authenticated' });
+}
+
+// Auth Routes
+
+app.get('/api/auth/status', async (req, res) => {
+  try {
+    const setupNeeded = !(await db.anyUserExists());
+    const authenticated = !!(req.session.userId && dekMap.has(req.sessionID));
+    res.json({ setupNeeded, authenticated });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to check auth status: ${error.message}` });
+  }
+});
+
+app.post('/api/auth/setup', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters' });
+  }
+
+  try {
+    if (await db.anyUserExists()) {
+      return res.status(409).json({ error: 'Admin account already exists' });
+    }
+
+    const passwordHash = await authService.hashPassword(password);
+    const dek = authService.generateDEK();
+    const wrappedDEK = authService.wrapDEK(dek, password);
+
+    const userId = await db.createUser(username, passwordHash, wrappedDEK);
+
+    req.session.userId = userId;
+    dekMap.set(req.sessionID, dek);
+
+    res.json({ message: 'Admin account created' });
+  } catch (error) {
+    res.status(500).json({ error: `Failed to create admin account: ${error.message}` });
+  }
+});
+
+app.post('/api/auth/login', async (req, res) => {
+  const { username, password } = req.body;
+
+  if (!username || !password) {
+    return res.status(400).json({ error: 'Username and password required' });
+  }
+
+  try {
+    const user = await db.getUserByUsername(username);
+    if (!user) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const valid = await authService.verifyPassword(password, user.password_hash);
+    if (!valid) {
+      return res.status(401).json({ error: 'Invalid username or password' });
+    }
+
+    const dek = authService.unwrapDEK(user, password);
+
+    req.session.userId = user.id;
+    dekMap.set(req.sessionID, dek);
+
+    res.json({ message: 'Logged in' });
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid username or password' });
+  }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  dekMap.delete(req.sessionID);
+  req.session.destroy(() => {
+    res.json({ message: 'Logged out' });
+  });
+});
+
+// API Routes (all require an authenticated session)
+app.use('/api', requireAuth);
+
 app.post('/api/deploy', async (req, res) => {
   const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes } = req.body;
 
@@ -108,16 +217,25 @@ app.get('/api/projects', async (req, res) => {
   }
 });
 
+// A field encrypted with the old per-project master password is
+// "salt:iv:tag:encrypted" (4 parts). Fields encrypted with the account DEK
+// are "iv:tag:encrypted" (3 parts, no salt since the key isn't derived).
+function isLegacyEncryptedField(value) {
+  return !!value && value.split(':').length === 4;
+}
+
 // Create or update project
 app.post('/api/projects', async (req, res) => {
-  const { id, name, masterPassword, config } = req.body;
+  const { id, name, config } = req.body;
 
-  if (!name || !masterPassword || !config) {
-    return res.status(400).json({ error: 'Missing required fields: name, masterPassword, config' });
+  if (!name || !config) {
+    return res.status(400).json({ error: 'Missing required fields: name, config' });
   }
 
+  const dek = dekMap.get(req.sessionID);
+
   try {
-    // Encrypt sensitive fields
+    // Encrypt sensitive fields with the account's data encryption key
     const encryptedConfig = {
       projectPath: config.projectPath,
       dockerfileName: config.dockerfileName,
@@ -126,12 +244,12 @@ app.post('/api/projects', async (req, res) => {
       imageTag: config.imageTag,
       buildPlatform: config.buildPlatform,
       dockerHubUsername: config.dockerHubUsername,
-      dockerHubPassword: cryptoService.encrypt(config.dockerHubPassword, masterPassword),
+      dockerHubPassword: cryptoService.encryptWithKey(config.dockerHubPassword, dek),
       sshHost: config.sshHost,
       sshUser: config.sshUser,
-      sshPassword: config.sshPassword ? cryptoService.encrypt(config.sshPassword, masterPassword) : null,
-      sshPrivateKey: config.sshPrivateKey ? cryptoService.encrypt(config.sshPrivateKey, masterPassword) : null,
-      sshPassphrase: config.sshPassphrase ? cryptoService.encrypt(config.sshPassphrase, masterPassword) : null,
+      sshPassword: config.sshPassword ? cryptoService.encryptWithKey(config.sshPassword, dek) : null,
+      sshPrivateKey: config.sshPrivateKey ? cryptoService.encryptWithKey(config.sshPrivateKey, dek) : null,
+      sshPassphrase: config.sshPassphrase ? cryptoService.encryptWithKey(config.sshPassphrase, dek) : null,
       containerName: config.containerName,
       hostPort: config.hostPort,
       containerPort: config.containerPort,
@@ -158,13 +276,13 @@ app.post('/api/projects', async (req, res) => {
   }
 });
 
-// Get project by ID and decrypt
+// Get project by ID and decrypt. If the project still holds fields encrypted
+// with the old per-project master password, the caller must supply
+// `oldMasterPassword` to migrate them to the account DEK; otherwise this
+// responds 409 with needsMigration so the frontend can prompt for it once.
 app.post('/api/projects/:id/decrypt', async (req, res) => {
-  const { masterPassword } = req.body;
-
-  if (!masterPassword) {
-    return res.status(400).json({ error: 'Master password required' });
-  }
+  const { oldMasterPassword } = req.body;
+  const dek = dekMap.get(req.sessionID);
 
   try {
     const project = await db.getProject(parseInt(req.params.id));
@@ -173,7 +291,20 @@ app.post('/api/projects/:id/decrypt', async (req, res) => {
       return res.status(404).json({ error: 'Project not found' });
     }
 
-    // Decrypt sensitive fields
+    const secretFields = ['dockerHubPassword', 'sshPassword', 'sshPrivateKey', 'sshPassphrase'];
+    const needsMigration = secretFields.some(field => isLegacyEncryptedField(project.config[field]));
+
+    if (needsMigration && !oldMasterPassword) {
+      return res.status(409).json({ needsMigration: true, error: 'This project was saved before login was added. Enter its old master password once to migrate it.' });
+    }
+
+    const decryptField = (value) => {
+      if (!value) return '';
+      return isLegacyEncryptedField(value)
+        ? cryptoService.decrypt(value, oldMasterPassword)
+        : cryptoService.decryptWithKey(value, dek);
+    };
+
     const decryptedConfig = {
       projectPath: project.config.projectPath,
       dockerfileName: project.config.dockerfileName,
@@ -182,12 +313,12 @@ app.post('/api/projects/:id/decrypt', async (req, res) => {
       imageTag: project.config.imageTag,
       buildPlatform: project.config.buildPlatform,
       dockerHubUsername: project.config.dockerHubUsername,
-      dockerHubPassword: cryptoService.decrypt(project.config.dockerHubPassword, masterPassword),
+      dockerHubPassword: decryptField(project.config.dockerHubPassword),
       sshHost: project.config.sshHost,
       sshUser: project.config.sshUser,
-      sshPassword: project.config.sshPassword ? cryptoService.decrypt(project.config.sshPassword, masterPassword) : '',
-      sshPrivateKey: project.config.sshPrivateKey ? cryptoService.decrypt(project.config.sshPrivateKey, masterPassword) : '',
-      sshPassphrase: project.config.sshPassphrase ? cryptoService.decrypt(project.config.sshPassphrase, masterPassword) : '',
+      sshPassword: decryptField(project.config.sshPassword),
+      sshPrivateKey: decryptField(project.config.sshPrivateKey),
+      sshPassphrase: decryptField(project.config.sshPassphrase),
       containerName: project.config.containerName,
       hostPort: project.config.hostPort,
       containerPort: project.config.containerPort,
@@ -195,6 +326,18 @@ app.post('/api/projects/:id/decrypt', async (req, res) => {
       useEnvFile: project.config.useEnvFile,
       volumes: project.config.volumes
     };
+
+    if (needsMigration) {
+      // Re-encrypt with the account DEK so the old master password is never needed again
+      const migratedConfig = {
+        ...project.config,
+        dockerHubPassword: cryptoService.encryptWithKey(decryptedConfig.dockerHubPassword, dek),
+        sshPassword: decryptedConfig.sshPassword ? cryptoService.encryptWithKey(decryptedConfig.sshPassword, dek) : null,
+        sshPrivateKey: decryptedConfig.sshPrivateKey ? cryptoService.encryptWithKey(decryptedConfig.sshPrivateKey, dek) : null,
+        sshPassphrase: decryptedConfig.sshPassphrase ? cryptoService.encryptWithKey(decryptedConfig.sshPassphrase, dek) : null
+      };
+      await db.updateProject(project.id, project.name, migratedConfig);
+    }
 
     res.json({
       id: project.id,

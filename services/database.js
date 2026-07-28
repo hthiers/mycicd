@@ -137,6 +137,21 @@ async function createTables() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // Users table (single admin account)
+    await connection.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        dek_salt VARCHAR(255) NOT NULL,
+        dek_iv VARCHAR(255) NOT NULL,
+        dek_tag VARCHAR(255) NOT NULL,
+        dek_encrypted VARCHAR(255) NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY unique_username (username)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     console.log('Database tables created/verified');
   } finally {
     connection.release();
@@ -267,6 +282,25 @@ async function tagExists(imageKey, tag) {
   return rows[0].count > 0;
 }
 
+// User operations (single admin account)
+async function createUser(username, passwordHash, dek) {
+  const [result] = await pool.query(
+    'INSERT INTO users (username, password_hash, dek_salt, dek_iv, dek_tag, dek_encrypted) VALUES (?, ?, ?, ?, ?, ?)',
+    [username, passwordHash, dek.salt, dek.iv, dek.tag, dek.encrypted]
+  );
+  return result.insertId;
+}
+
+async function getUserByUsername(username) {
+  const [rows] = await pool.query('SELECT * FROM users WHERE username = ?', [username]);
+  return rows.length ? rows[0] : null;
+}
+
+async function anyUserExists() {
+  const [rows] = await pool.query('SELECT COUNT(*) as count FROM users');
+  return rows[0].count > 0;
+}
+
 module.exports = {
   initializeDatabase,
   createProject,
@@ -280,5 +314,8 @@ module.exports = {
   getAllJobs,
   addImageTag,
   getImageTags,
-  tagExists
+  tagExists,
+  createUser,
+  getUserByUsername,
+  anyUserExists
 };
