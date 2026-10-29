@@ -1,13 +1,13 @@
 const mysql = require('mysql2/promise');
 
 const DB_CONFIG = {
-  host: 'localhost',
-  port: 3306,
-  user: 'root',
-  password: 'root'
+  host: process.env.DB_HOST || 'localhost',
+  port: Number(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'root'
 };
 
-const DB_NAME = 'cicd_tool';
+const DB_NAME = process.env.DB_NAME || 'cicd_tool_v2';
 
 let pool;
 

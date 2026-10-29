@@ -6,6 +6,7 @@ const session = require('express-session');
 const path = require('path');
 const dockerService = require('./services/docker');
 const sshService = require('./services/ssh');
+const phpDeployService = require('./services/phpDeploy');
 const cryptoService = require('./services/crypto');
 const authService = require('./services/auth');
 const db = require('./services/database');
@@ -129,20 +130,28 @@ app.post('/api/auth/logout', (req, res) => {
 app.use('/api', requireAuth);
 
 app.post('/api/deploy', async (req, res) => {
-  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes } = req.body;
-
-  // Validate required fields
-  if (!projectPath || !imageName || !imageTag || !dockerHubUsername || !dockerHubPassword || !sshHost || !sshUser || !containerName) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
+  const deployType = req.body.deployType || 'docker';
+  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes, networkName, restartPolicy, remotePath, ignorePatterns, envFileContent, postDeployCommands } = req.body;
 
   // Validate SSH authentication - must have either password or private key
   if (!sshPassword && !sshPrivateKey) {
     return res.status(400).json({ error: 'Either SSH password or SSH private key must be provided' });
   }
 
+  if (deployType === 'php') {
+    if (!projectPath || !remotePath || !sshHost || !sshUser) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+  } else {
+    if (!projectPath || !imageName || !imageTag || !dockerHubUsername || !dockerHubPassword || !sshHost || !sshUser || !containerName) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+  }
+
   try {
-    const config = { projectPath, dockerfileName, contextPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes };
+    const config = deployType === 'php'
+      ? { deployType, projectPath, sshHost, remotePath, ignorePatterns, envFileContent, postDeployCommands }
+      : { deployType, projectPath, dockerfileName, contextPath, imageName, imageTag, sshHost, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes, networkName, restartPolicy };
     const jobId = await db.createJob(config);
 
     // Store active job in memory for real-time updates
@@ -151,7 +160,7 @@ app.post('/api/deploy', async (req, res) => {
     res.json({ jobId, message: 'Deployment started' });
 
     // Run deployment asynchronously
-    runDeployment(jobId, { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes });
+    runDeployment(jobId, { deployType, projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes, networkName, restartPolicy, remotePath, ignorePatterns, envFileContent, postDeployCommands });
   } catch (error) {
     res.status(500).json({ error: `Failed to create job: ${error.message}` });
   }
@@ -237,6 +246,7 @@ app.post('/api/projects', async (req, res) => {
   try {
     // Encrypt sensitive fields with the account's data encryption key
     const encryptedConfig = {
+      deployType: config.deployType || 'docker',
       projectPath: config.projectPath,
       dockerfileName: config.dockerfileName,
       contextPath: config.contextPath,
@@ -244,7 +254,7 @@ app.post('/api/projects', async (req, res) => {
       imageTag: config.imageTag,
       buildPlatform: config.buildPlatform,
       dockerHubUsername: config.dockerHubUsername,
-      dockerHubPassword: cryptoService.encryptWithKey(config.dockerHubPassword, dek),
+      dockerHubPassword: config.dockerHubPassword ? cryptoService.encryptWithKey(config.dockerHubPassword, dek) : null,
       sshHost: config.sshHost,
       sshUser: config.sshUser,
       sshPassword: config.sshPassword ? cryptoService.encryptWithKey(config.sshPassword, dek) : null,
@@ -255,7 +265,13 @@ app.post('/api/projects', async (req, res) => {
       containerPort: config.containerPort,
       envVars: config.envVars,
       useEnvFile: config.useEnvFile,
-      volumes: config.volumes
+      volumes: config.volumes,
+      networkName: config.networkName,
+      restartPolicy: config.restartPolicy,
+      remotePath: config.remotePath,
+      ignorePatterns: config.ignorePatterns,
+      envFileContent: config.envFileContent,
+      postDeployCommands: config.postDeployCommands
     };
 
     if (id) {
@@ -306,6 +322,7 @@ app.post('/api/projects/:id/decrypt', async (req, res) => {
     };
 
     const decryptedConfig = {
+      deployType: project.config.deployType || 'docker',
       projectPath: project.config.projectPath,
       dockerfileName: project.config.dockerfileName,
       contextPath: project.config.contextPath,
@@ -324,7 +341,13 @@ app.post('/api/projects/:id/decrypt', async (req, res) => {
       containerPort: project.config.containerPort,
       envVars: project.config.envVars,
       useEnvFile: project.config.useEnvFile,
-      volumes: project.config.volumes
+      volumes: project.config.volumes,
+      networkName: project.config.networkName,
+      restartPolicy: project.config.restartPolicy,
+      remotePath: project.config.remotePath,
+      ignorePatterns: project.config.ignorePatterns,
+      envFileContent: project.config.envFileContent,
+      postDeployCommands: project.config.postDeployCommands
     };
 
     if (needsMigration) {
@@ -391,10 +414,6 @@ app.get('/api/tags/:username/:imageName/:tag/exists', async (req, res) => {
 
 // Deployment function
 async function runDeployment(jobId, config) {
-  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes } = config;
-  const fullImageName = `${dockerHubUsername}/${imageName}:${imageTag}`;
-
-  // Get active job from memory
   const job = activeJobs.get(jobId);
   if (!job) return;
 
@@ -402,29 +421,15 @@ async function runDeployment(jobId, config) {
     job.status = 'running';
     await updateJobInDB(jobId, job.status, job.logs);
 
-    // Step 1: Build Docker image
-    addLog(jobId, 'Building Docker image...');
-    await dockerService.buildImage(projectPath, fullImageName, buildPlatform, dockerfileName, contextPath, (log) => addLog(jobId, log));
-    addLog(jobId, `Successfully built image: ${fullImageName}`);
+    if (config.deployType === 'php') {
+      await runPhpDeployment(jobId, config);
+    } else {
+      await runDockerDeployment(jobId, config);
+    }
 
-    // Step 2: Push to Docker Hub
-    addLog(jobId, 'Pushing image to Docker Hub...');
-    await dockerService.pushImage(fullImageName, dockerHubUsername, dockerHubPassword, (log) => addLog(jobId, log));
-    addLog(jobId, 'Successfully pushed image to Docker Hub');
-
-    // Step 3: Deploy to server via SSH
-    addLog(jobId, `Connecting to server ${sshHost}...`);
-    await sshService.deployContainer(sshHost, sshUser, sshPassword, fullImageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, useEnvFile, volumes, (log) => addLog(jobId, log));
     addLog(jobId, 'Deployment completed successfully!');
-
     job.status = 'completed';
     await updateJobInDB(jobId, job.status, job.logs);
-
-    // Record tag in history
-    const imageKey = `${dockerHubUsername}/${imageName}`;
-    await db.addImageTag(imageKey, imageTag, jobId);
-
-    // Remove from active jobs
     activeJobs.delete(jobId);
   } catch (error) {
     addLog(jobId, `ERROR: ${error.message}`);
@@ -432,6 +437,48 @@ async function runDeployment(jobId, config) {
     await updateJobInDB(jobId, job.status, job.logs);
     activeJobs.delete(jobId);
   }
+}
+
+async function runDockerDeployment(jobId, config) {
+  const { projectPath, dockerfileName, contextPath, imageName, imageTag, dockerHubUsername, dockerHubPassword, sshHost, sshUser, sshPassword, sshPrivateKey, sshPassphrase, containerName, hostPort, containerPort, buildPlatform, envVars, useEnvFile, volumes, networkName, restartPolicy } = config;
+  const fullImageName = `${dockerHubUsername}/${imageName}:${imageTag}`;
+
+  // Docker rejects malformed references with an opaque "invalid reference format"; check each part first
+  const repoPart = /^[a-z0-9]+(?:(?:[._]|__|-+)[a-z0-9]+)*$/;
+  const tagPart = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/;
+  if (!repoPart.test(dockerHubUsername)) {
+    throw new Error(`Invalid Docker Hub username "${dockerHubUsername}": must be lowercase letters/digits with optional . _ - separators, no spaces`);
+  }
+  if (!repoPart.test(imageName)) {
+    throw new Error(`Invalid image name "${imageName}": must be lowercase letters/digits with optional . _ - separators, no spaces or uppercase`);
+  }
+  if (!tagPart.test(imageTag)) {
+    throw new Error(`Invalid image tag "${imageTag}": only letters, digits, _ . - allowed (max 128 chars), no spaces`);
+  }
+
+  // Step 1: Build Docker image
+  addLog(jobId, 'Building Docker image...');
+  await dockerService.buildImage(projectPath, fullImageName, buildPlatform, dockerfileName, contextPath, (log) => addLog(jobId, log));
+  addLog(jobId, `Successfully built image: ${fullImageName}`);
+
+  // Step 2: Push to Docker Hub
+  addLog(jobId, 'Pushing image to Docker Hub...');
+  await dockerService.pushImage(fullImageName, dockerHubUsername, dockerHubPassword, (log) => addLog(jobId, log));
+  addLog(jobId, 'Successfully pushed image to Docker Hub');
+
+  // Step 3: Deploy to server via SSH
+  addLog(jobId, `Connecting to server ${sshHost}...`);
+  await sshService.deployContainer(sshHost, sshUser, sshPassword, fullImageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, useEnvFile, volumes, networkName, restartPolicy, (log) => addLog(jobId, log));
+
+  // Record tag in history
+  const imageKey = `${dockerHubUsername}/${imageName}`;
+  await db.addImageTag(imageKey, imageTag, jobId);
+}
+
+async function runPhpDeployment(jobId, config) {
+  addLog(jobId, `Connecting to server ${config.sshHost}...`);
+  addLog(jobId, 'Syncing files to server...');
+  await phpDeployService.deployPhp(config, (log) => addLog(jobId, log));
 }
 
 function addLog(jobId, message) {

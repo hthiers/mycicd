@@ -1,36 +1,44 @@
 const { NodeSSH } = require('node-ssh');
 
-async function deployContainer(host, username, password, imageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, useEnvFile, volumes, logCallback) {
+async function connect(host, username, password, sshPrivateKey, sshPassphrase, logCallback) {
   const ssh = new NodeSSH();
+
+  logCallback(`Connecting to ${host}...`);
+
+  // Build connection config - use SSH key if provided, otherwise use password
+  const connectionConfig = {
+    host: host,
+    username: username
+  };
+
+  if (sshPrivateKey) {
+    connectionConfig.privateKey = sshPrivateKey;
+    if (sshPassphrase) {
+      connectionConfig.passphrase = sshPassphrase;
+      logCallback('Using SSH key authentication with passphrase');
+    } else {
+      logCallback('Using SSH key authentication');
+    }
+  } else if (password) {
+    connectionConfig.password = password;
+    logCallback('Using password authentication');
+  } else {
+    throw new Error('Either password or SSH private key must be provided');
+  }
+
+  await ssh.connect(connectionConfig);
+
+  logCallback('Connected successfully');
+
+  return ssh;
+}
+
+async function deployContainer(host, username, password, imageName, containerName, hostPort, containerPort, sshPrivateKey, sshPassphrase, envVars, useEnvFile, volumes, networkName, restartPolicy, logCallback) {
+  let ssh;
   let envFilePath = null;
 
   try {
-    logCallback(`Connecting to ${host}...`);
-
-    // Build connection config - use SSH key if provided, otherwise use password
-    const connectionConfig = {
-      host: host,
-      username: username
-    };
-
-    if (sshPrivateKey) {
-      connectionConfig.privateKey = sshPrivateKey;
-      if (sshPassphrase) {
-        connectionConfig.passphrase = sshPassphrase;
-        logCallback('Using SSH key authentication with passphrase');
-      } else {
-        logCallback('Using SSH key authentication');
-      }
-    } else if (password) {
-      connectionConfig.password = password;
-      logCallback('Using password authentication');
-    } else {
-      throw new Error('Either password or SSH private key must be provided');
-    }
-
-    await ssh.connect(connectionConfig);
-
-    logCallback('Connected successfully');
+    ssh = await connect(host, username, password, sshPrivateKey, sshPassphrase, logCallback);
 
     // Pull the new image
     logCallback(`Pulling image ${imageName}...`);
@@ -43,6 +51,27 @@ async function deployContainer(host, username, password, imageName, containerNam
 
     // Build docker run command with optional port mapping and environment variables
     let dockerRunCmd = `docker run -d --name ${containerName}`;
+
+    // Attach to a specific Docker network (default network if empty)
+    const network = networkName ? networkName.trim() : '';
+    if (network) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9_.-]*$/.test(network)) {
+        throw new Error(`Invalid Docker network name: ${network}`);
+      }
+      dockerRunCmd += ` --network ${network}`;
+      logCallback(`Network: ${network}`);
+    }
+
+    // Restart policy (no flag = Docker's default, i.e. never restart)
+    const allowedPolicies = ['always', 'unless-stopped', 'on-failure'];
+    const policy = restartPolicy ? restartPolicy.trim() : '';
+    if (policy) {
+      if (!allowedPolicies.includes(policy)) {
+        throw new Error(`Invalid restart policy: ${policy}`);
+      }
+      dockerRunCmd += ` --restart ${policy}`;
+      logCallback(`Restart policy: ${policy}`);
+    }
 
     if (hostPort && containerPort) {
       dockerRunCmd += ` -p ${hostPort}:${containerPort}`;
@@ -106,14 +135,14 @@ async function deployContainer(host, username, password, imageName, containerNam
     ssh.dispose();
   } catch (error) {
     // Clean up env file on error
-    if (envFilePath) {
+    if (envFilePath && ssh) {
       try {
         await executeCommand(ssh, `rm -f ${envFilePath}`, () => {}, true);
       } catch (cleanupError) {
         // Ignore cleanup errors
       }
     }
-    ssh.dispose();
+    if (ssh) ssh.dispose();
     throw error;
   }
 }
@@ -139,5 +168,7 @@ async function executeCommand(ssh, command, logCallback, silent = false) {
 }
 
 module.exports = {
+  connect,
+  executeCommand,
   deployContainer
 };
